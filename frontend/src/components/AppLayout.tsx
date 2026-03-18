@@ -1,8 +1,8 @@
 'use client'
-import { useAuth } from '@/lib/auth'
+import { useAuth } from '../lib/auth'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import Sidebar from '@/components/Sidebar'
+import Sidebar from './Sidebar'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { uid } = useAuth()

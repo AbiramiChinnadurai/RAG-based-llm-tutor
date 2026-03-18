@@ -2,9 +2,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import AppLayout from '@/components/AppLayout'
-import { useAuth } from '@/lib/auth'
-import { api } from '@/lib/api'
+import AppLayout from '../../../components/AppLayout'
+import { useAuth } from '../../../lib/auth'
+import { api } from '../../../lib/api'
 import ReactMarkdown from 'react-markdown'
 
 export default function SubjectLearnPage() {

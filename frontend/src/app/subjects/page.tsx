@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import AppLayout from '@/components/AppLayout'
-import { useAuth } from '@/lib/auth'
-import { api } from '@/lib/api'
+import AppLayout from '../../components/AppLayout'
+import { useAuth } from '../../lib/auth'
+import { api } from '../../lib/api'
 
 export default function SubjectsPage() {
     const { uid } = useAuth()

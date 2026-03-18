@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import AppLayout from '@/components/AppLayout'
-import { useAuth } from '@/lib/auth'
-import { api } from '@/lib/api'
+import AppLayout from '../../components/AppLayout'
+import { useAuth } from '../../lib/auth'
+import { api } from '../../lib/api'
 
 const LEVEL_LABELS = ['', 'I', 'II', 'III', 'IV', 'V']
 

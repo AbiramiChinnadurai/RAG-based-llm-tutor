@@ -1,9 +1,9 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
-import AppLayout from '@/components/AppLayout'
-import { useAuth } from '@/lib/auth'
-import { api } from '@/lib/api'
+import AppLayout from '../../components/AppLayout'
+import { useAuth } from '../../lib/auth'
+import { api } from '../../lib/api'
 
 function formatMessage(text: string): string {
     const parts = text.split(/(```[\s\S]*?```)/g)

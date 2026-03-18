@@ -1,8 +1,8 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/auth'
-import { api } from '@/lib/api'
+import { useAuth } from '../lib/auth'
+import { api } from '../lib/api'
 import { useEffect, useState } from 'react'
 
 const ICONS: Record<string, any> = {

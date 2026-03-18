@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
-import AppLayout from '@/components/AppLayout'
-import { useAuth } from '@/lib/auth'
+import AppLayout from '../../components/AppLayout'
+import { useAuth } from '../../lib/auth'
 
 export default function NotesPage() {
     const { uid, profile } = useAuth()

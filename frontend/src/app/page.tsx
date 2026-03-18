@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/auth'
-import { api } from '@/lib/api'
+import { useAuth } from '../lib/auth'
+import { api } from '../lib/api'
 
 export default function HomePage() {
   const { uid, login } = useAuth()

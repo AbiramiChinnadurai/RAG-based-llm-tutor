@@ -1,0 +1,64 @@
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+bin/
+lib/
+share/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Node.js
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Environment / Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.streamlit/secrets.toml
+secrets.toml
+backend/.env
+
+# Databases & Indexes
+*.db
+*.sqlite
+faiss_indexes/
+kg_cache/
+backend/faiss_indexes/
+backend/kg_cache/
+backend/database.db
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+backend/__pycache__/
+rag/__pycache__/
+llm/__pycache__/
+database/__pycache__/
+utils/__pycache__/
+uploads/
+backend/uploads/

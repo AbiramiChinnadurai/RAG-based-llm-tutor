@@ -54,14 +54,13 @@ export default function SubjectLearnPage() {
             setIsLoadingTopics(false)
         }).catch(() => setIsLoadingTopics(false))
 
-        fetch(`http://127.0.0.1:8000/api/plan/${uid}`)
-            .then(res => res.ok ? res.json() : null)
-            .then(data => {
-                if (data?.days?.length > 0) {
-                    const completed = data.days.filter((d: any) => d.status === 'completed').length
-                    setRoadmapPct(Math.round((completed / data.days.length) * 100))
-                }
-            }).catch(() => {})
+        // 57: Use api instead of hardcoded localhost
+        api.plan.generate(uid).then(data => {
+            if (data?.days?.length > 0) {
+                const completed = data.days.filter((d: any) => d.status === 'completed').length
+                setRoadmapPct(Math.round((completed / data.days.length) * 100))
+            }
+        }).catch(() => {})
     }, [uid, subject])
 
     return (
@@ -664,22 +663,22 @@ function RoadmapSlidePanel({ uid, open, onClose, onUpdatePct }: { uid: string, o
     useEffect(() => {
         if (open && uid) {
             setLoading(true)
-            fetch(`http://127.0.0.1:8000/api/plan/${uid}`)
-                .then(res => res.ok ? res.json() : null)
-                .then(data => {
-                    if (data && data.days) {
-                        setDays(data.days)
-                        const completed = data.days.filter((d: any) => d.status === 'completed').length
-                        onUpdatePct(Math.round((completed / data.days.length) * 100))
-                    }
-                }).catch(() => {})
-                .finally(() => setLoading(false))
+            api.plan.generate(uid).then(data => {
+                if (data && data.days) {
+                    setDays(data.days)
+                    const completed = data.days.filter((d: any) => d.status === 'completed').length
+                    onUpdatePct(Math.round((completed / data.days.length) * 100))
+                }
+            }).catch(() => {})
+            .finally(() => setLoading(false))
         }
     }, [open, uid, onUpdatePct])
 
     const markComplete = async (dayNum: number) => {
         try {
-            await fetch(`http://127.0.0.1:8000/api/plan/${uid}/day/${dayNum}/status`, {
+            // Using BASE from api.ts
+            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
+            await fetch(`${BASE}/api/plan/${uid}/day/${dayNum}/status`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'completed' })
             })

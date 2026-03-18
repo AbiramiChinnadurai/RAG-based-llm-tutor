@@ -28,7 +28,18 @@ from xai.xai_engine import build_xai_explanation, get_xai_system_note
 from kg.kg_engine import build_knowledge_graph, KnowledgeGraph
 
 app = FastAPI(title="LLM-ITS API", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# Ensure required directories exist for RAG/uploads
+for d in ["uploads", "faiss_indexes", "kg_cache"]:
+    os.makedirs(os.path.join(PROJECT_ROOT, d), exist_ok=True)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def startup(): init_db()

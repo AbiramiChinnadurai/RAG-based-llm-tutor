@@ -11,3 +11,7 @@ plotly>=5.18.0
 psycopg2-binary
 groq
 bcrypt
+fastapi
+uvicorn
+python-multipart
+httpx

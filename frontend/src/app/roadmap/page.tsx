@@ -25,7 +25,8 @@ export default function RoadmapPage() {
     const loadPlan = async () => {
         if (!uid) return
         try {
-            const res = await fetch(`http://127.0.0.1:8000/api/plan/${uid}`)
+            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
+            const res = await fetch(`${BASE}/api/plan/${uid}`)
             if (res.ok) {
                 const data = await res.json()
                 setPlanText(data.plan_text)
@@ -77,7 +78,8 @@ export default function RoadmapPage() {
         const updated = days.map(d => d.day_number === dayNum ? { ...d, status } : d)
         setDays(updated)
         try {
-            await fetch(`http://127.0.0.1:8000/api/plan/${uid}/day/${dayNum}/status`, {
+            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
+            await fetch(`${BASE}/api/plan/${uid}/day/${dayNum}/status`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status }),
             })

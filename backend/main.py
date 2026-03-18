@@ -66,6 +66,9 @@ class EmotionRequest(BaseModel): text: str
 class XAIRequest(BaseModel):
     uid: str; subject: str; topic: str; query: str; accuracy: Optional[float] = 0.5
 
+@app.get("/")
+def read_root(): return {"message": "LLM-ITS Backend is LIVE", "docs": "/docs", "health": "/api/health"}
+
 @app.get("/api/health")
 def health(): return {"status": "ok"}
 

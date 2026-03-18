@@ -19,10 +19,10 @@ from database.db import (
     log_quiz_attempt, get_xp, get_streak, get_level_title,
     get_xp_progress, add_xp, update_streak,
     save_learning_plan, log_error_topic, get_error_topics,
-    get_ael_modality,
+    get_ael_modality, save_subject_content, get_subject_content, # Added these
 )
 from llm.llm_engine import get_client, generate_explanation, generate_quiz_question, generate_learning_plan
-from rag.rag_pipeline import build_faiss_index, retrieve_chunks, format_context, index_exists, extract_topics_from_pdf
+from rag.rag_pipeline import build_faiss_index, retrieve_chunks, format_context, index_exists, extract_topics_from_pdf, build_index_from_text # Added build_index_from_text
 from emotion.emotion_engine import detect_emotion, get_emotion_prompt_modifier
 from xai.xai_engine import build_xai_explanation, get_xai_system_note
 from kg.kg_engine import build_knowledge_graph, KnowledgeGraph
@@ -68,6 +68,21 @@ class XAIRequest(BaseModel):
 @app.get("/api/health")
 def health(): return {"status": "ok"}
 
+def ensure_index(subject: str):
+    """
+    Checks if the FAISS index exists locally.
+    If not, pulls the full_text from Supabase and rebuilds it.
+    This ensures persistence on Render free tier.
+    """
+    if not index_exists(subject):
+        print(f"[Persistence] Index missing for {subject}. Attempting rebuild from Supabase...")
+        full_text = get_subject_content(subject)
+        if full_text:
+            build_index_from_text(subject, full_text)
+            print(f"[Persistence] Successfully rebuilt index for {subject}")
+        else:
+            print(f"[Persistence] No text found in Supabase for {subject}")
+
 @app.post("/api/auth/register")
 def register(req: RegisterRequest):
     try:
@@ -107,6 +122,7 @@ def get_stats(uid: str):
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
+    ensure_index(req.subject)
     profile = get_profile(req.uid)
     if not profile: raise HTTPException(404, "Not found")
     profile["current_subject"] = req.subject
@@ -151,6 +167,7 @@ async def chat(req: ChatRequest):
 
 @app.post("/api/quiz/generate")
 def quiz_generate(req: QuizGenerateRequest):
+    ensure_index(req.subject)
     profile = get_profile(req.uid)
     if not profile: raise HTTPException(404, "Not found")
     summaries = get_subject_summary(req.uid)
@@ -217,9 +234,12 @@ async def upload_syllabus(uid: str=Form(...), subject: str=Form(...), file: Uplo
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         tmp.write(await file.read()); tmp_path = tmp.name
     try:
-        num_chunks = build_faiss_index(subject, tmp_path)
+        num_chunks, full_text = build_faiss_index(subject, tmp_path)
+        save_subject_content(subject, full_text) # Save text to Supabase
         topics = extract_topics_from_pdf(tmp_path)
         try:
+            from database.db import save_topics
+            save_topics(subject, topics)
             kg = build_knowledge_graph(subject, topics, get_client())
             kg_stats = kg.stats() if kg else {}
         except: kg_stats = {}
@@ -248,6 +268,7 @@ def update_subjects(req: UpdateSubjectsRequest):
 
 @app.post("/api/xai/explain")
 def xai_explain(req: XAIRequest):
+    ensure_index(req.subject)
     profile = get_profile(req.uid)
     if not profile: raise HTTPException(404, "Not found")
     summaries = get_subject_summary(req.uid)

@@ -62,10 +62,41 @@ def chunk_text(pages, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
     return chunks
 
 
+def build_index_from_text(subject, full_text):
+    """
+    Build index from a raw string of text (e.g. from Supabase).
+    Used for Zero-Budget Persistence to rebuild index after server restart.
+    """
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    index_path  = os.path.join(INDEX_DIR, f"{subject}_index.faiss")
+    chunks_path = os.path.join(INDEX_DIR, f"{subject}_chunks.pkl")
+
+    # Treat the whole text as one page for simplicity during rebuild
+    pages = [{"text": full_text, "page": 1}]
+    chunks = chunk_text(pages)
+
+    if not chunks:
+        return 0
+
+    model  = get_embed_model()
+    texts  = [c["text"] for c in chunks]
+    embeds = model.encode(texts, show_progress_bar=False, batch_size=32)
+    embeds = np.array(embeds, dtype="float32")
+
+    dim   = embeds.shape[1]
+    index = faiss.IndexFlatL2(dim)
+    index.add(embeds)
+
+    faiss.write_index(index, index_path)
+    with open(chunks_path, "wb") as f:
+        pickle.dump(chunks, f)
+
+    return len(chunks)
+
 def build_faiss_index(subject, pdf_path):
     """
     Full pipeline: PDF → chunks → embeddings → FAISS flat L2 index.
-    Saves index + chunks to disk.
+    Saves index + chunks to disk. Returns (num_chunks, full_text).
     """
     os.makedirs(INDEX_DIR, exist_ok=True)
     index_path  = os.path.join(INDEX_DIR, f"{subject}_index.faiss")
@@ -73,6 +104,7 @@ def build_faiss_index(subject, pdf_path):
 
     print(f"[RAG] Extracting text from {pdf_path} ...")
     pages  = extract_text_from_pdf(pdf_path)
+    full_text = "\n".join([p["text"] for p in pages])
     chunks = chunk_text(pages)
     print(f"[RAG] Created {len(chunks)} chunks.")
 
@@ -93,7 +125,7 @@ def build_faiss_index(subject, pdf_path):
         pickle.dump(chunks, f)
 
     print(f"[RAG] Index saved → {index_path} ({len(chunks)} chunks)")
-    return len(chunks)
+    return len(chunks), full_text
 
 
 def load_faiss_index(subject):

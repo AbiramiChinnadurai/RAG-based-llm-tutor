@@ -201,7 +201,6 @@ def init_db():
         FOREIGN KEY (uid) REFERENCES learner_profile(uid)
     )''')
 
-    # ── AI: Socratic session history ──────────────────────────────────
     c.execute('''
     CREATE TABLE IF NOT EXISTS socratic_sessions (
         id          SERIAL PRIMARY KEY,
@@ -211,6 +210,13 @@ def init_db():
         messages    TEXT,
         timestamp   TIMESTAMP DEFAULT NOW(),
         FOREIGN KEY (uid) REFERENCES learner_profile(uid)
+    )''')
+
+    # -- Subject Full Text (Zero-Budget Persistence) --
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS subject_content (
+        subject     TEXT PRIMARY KEY,
+        full_text   TEXT
     )''')
 
     conn.commit()
@@ -797,6 +803,27 @@ def log_study_interaction(uid, subject, topic, question, answer, modality, laten
     conn.commit()
     cur.close()
     conn.close()
+
+# -- ZERO BUDGET PERSISTENCE FUNCTIONS --
+
+def save_subject_content(subject, text):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO subject_content (subject, full_text)
+        VALUES (%s, %s)
+        ON CONFLICT (subject) DO UPDATE SET full_text = EXCLUDED.full_text
+    """, (subject, text))
+    conn.commit()
+    conn.close()
+
+def get_subject_content(subject):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT full_text FROM subject_content WHERE subject=%s", (subject,))
+    row = c.fetchone()
+    conn.close()
+    return row["full_text"] if row else None
 
 def update_subject_list(uid, subjects):
     """Update the learner's subject list."""

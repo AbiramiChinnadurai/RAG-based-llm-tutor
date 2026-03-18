@@ -6,11 +6,9 @@ RAG Pipeline from the paper:
 """
 
 import os
-import pickle
-import fitz                        # PyMuPDF
-from sentence_transformers import SentenceTransformer
-import faiss
 import numpy as np
+
+EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 CHUNK_SIZE       = 500     # tokens (approximate by words)
@@ -24,6 +22,7 @@ _embed_model = None
 def get_embed_model():
     global _embed_model
     if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
         _embed_model = SentenceTransformer(EMBED_MODEL_NAME)
     return _embed_model
 
@@ -32,6 +31,7 @@ def get_embed_model():
 
 def extract_text_from_pdf(pdf_path):
     """Extract text from PDF using PyMuPDF."""
+    import fitz   # PyMuPDF
     doc = fitz.open(pdf_path)
     pages = []
     for page_num, page in enumerate(doc):
@@ -119,6 +119,8 @@ def build_faiss_index(subject, pdf_path):
     index = faiss.IndexFlatL2(dim)
     index.add(embeds)
 
+    import faiss
+    import pickle
     # Persist
     faiss.write_index(index, index_path)
     with open(chunks_path, "wb") as f:
@@ -130,6 +132,8 @@ def build_faiss_index(subject, pdf_path):
 
 def load_faiss_index(subject):
     """Load persisted FAISS index and chunks from disk."""
+    import faiss
+    import pickle
     index_path  = os.path.join(INDEX_DIR, f"{subject}_index.faiss")
     chunks_path = os.path.join(INDEX_DIR, f"{subject}_chunks.pkl")
 

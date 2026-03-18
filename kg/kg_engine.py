@@ -26,11 +26,7 @@ import pickle
 from pathlib import Path
 from typing import Optional
 
-# networkx for graph structure
-try:
-    import networkx as nx
-except ImportError:
-    raise ImportError("Run: pip install networkx")
+# networkx for graph structure will be imported locally in methods
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -63,6 +59,7 @@ class KnowledgeGraph:
     """
 
     def __init__(self, subject: str):
+        import networkx as nx
         self.subject = subject
         self.graph   = nx.DiGraph()
         self._topic_index = {}  # lowercase → original topic name
@@ -121,11 +118,12 @@ class KnowledgeGraph:
             return [topic]
 
         try:
+            import networkx as nx
             ancestors = nx.ancestors(self.graph, tid)
             subgraph  = self.graph.subgraph(list(ancestors) + [tid])
             order     = list(nx.topological_sort(subgraph))
             return [self.graph.nodes[n].get("label", n) for n in order]
-        except nx.NetworkXError:
+        except Exception:
             return [topic]
 
     def get_next_topics(self, mastered_topics: list) -> list:
@@ -164,9 +162,10 @@ class KnowledgeGraph:
         fid = self._normalize(from_topic)
         tid = self._normalize(to_topic)
         try:
+            import networkx as nx
             path = nx.shortest_path(self.graph, fid, tid)
             return [self.graph.nodes[n].get("label", n) for n in path]
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
+        except Exception:
             return [from_topic, to_topic]
 
     def mark_mastered(self, topic: str):
@@ -347,6 +346,7 @@ def build_knowledge_graph(subject: str, topics: list, groq_client,
         kg.add_prerequisite(prereq, topic, confidence)
 
     # Step 3: Remove cycles (keep graph a DAG)
+    import networkx as nx
     while True:
         try:
             cycle = nx.find_cycle(kg.graph)

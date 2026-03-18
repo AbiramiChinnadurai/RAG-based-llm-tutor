@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
+sys.path.append(os.path.abspath(os.path.dirname(__file__))) # Ensure local backend modules are found
 import streamlit_shim
 
 PROJECT_ROOT = Path(__file__).parent.parent

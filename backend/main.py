@@ -34,6 +34,9 @@ app = FastAPI(title="LLM-ITS API", version="1.0.0")
 for d in ["uploads", "faiss_indexes", "kg_cache"]:
     os.makedirs(os.path.join(PROJECT_ROOT, d), exist_ok=True)
 
+# In-memory tracking for background indexing
+INDEXING_IN_PROGRESS = set()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -234,6 +237,7 @@ def plan_generate(req: PlanRequest):
 
 def process_syllabus_task(subject: str, tmp_path: str):
     """Heavy lifting moved to background to avoid Render 30s timeout."""
+    INDEXING_IN_PROGRESS.add(subject)
     try:
         print(f"[Background] Starting processing for {subject} ...")
         num_chunks, full_text = build_faiss_index(subject, tmp_path)
@@ -253,6 +257,7 @@ def process_syllabus_task(subject: str, tmp_path: str):
     except Exception as e:
         print(f"[Background] Processing Error: {e}")
     finally:
+        INDEXING_IN_PROGRESS.discard(subject)
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
@@ -279,25 +284,42 @@ async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...),
         if os.path.exists(tmp_path): os.unlink(tmp_path)
         raise HTTPException(500, str(e))
 
-@app.get("/api/subjects/{uid}")
-def get_subjects(uid: str):
-    profile = get_profile(uid)
-    if not profile: raise HTTPException(404, "Not found")
-    subjects = [s.strip() for s in profile.get("subject_list","").split(",") if s.strip()]
-    return [{"name":s,"index_ready":index_exists(s),"topics":get_topics(s)} for s in subjects]
-
-class UpdateSubjectsRequest(BaseModel):
-    uid: str
-    subjects: List[str]
-
 @app.post("/api/profile/subjects")
 def update_subjects(req: UpdateSubjectsRequest):
     try:
+        print(f"[Subjects] Updating list for UID {req.uid}: {req.subjects}")
         from database.db import update_subject_list
         update_subject_list(req.uid, req.subjects)
         return {"ok": True}
     except Exception as e:
+        print(f"[Subjects] Update Error: {e}")
         raise HTTPException(500, str(e))
+
+@app.get("/api/subjects/{uid}")
+def get_subjects(uid: str):
+    print(f"[Subjects] Loading for UID {uid}")
+    profile = get_profile(uid)
+    if not profile: 
+        print(f"[Subjects] Profile not found for UID {uid}")
+        raise HTTPException(404, "Profile not found")
+    
+    # Normalize subject list
+    raw_list = profile.get("subject_list") or ""
+    subjects = [s.strip() for s in raw_list.split(",") if s.strip()]
+    print(f"[Subjects] Found in DB: {subjects}")
+    
+    return [
+        {
+            "name": s, 
+            "index_ready": index_exists(s), 
+            "indexing": s in INDEXING_IN_PROGRESS, 
+            "topics": get_topics(s)
+        } for s in subjects
+    ]
+
+class UpdateSubjectsRequest(BaseModel):
+    uid: str
+    subjects: List[str]
 
 @app.post("/api/xai/explain")
 def xai_explain(req: XAIRequest):

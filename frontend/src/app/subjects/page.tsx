@@ -29,28 +29,23 @@ export default function SubjectsPage() {
 
         // Sync to backend so sidebar picks it up
         try {
-            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
-            await fetch(`${BASE}/api/profile/subjects`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ uid, subjects: updated.map(s => s.name) }),
-            })
-        } catch { }
+            await api.subjects.update(uid!, updated.map(s => s.name))
+        } catch (e: any) {
+            console.error("Sync failed", e)
+            setMessage({ text: 'Sync failed: ' + e.message, type: 'err' })
+        }
     }
 
     const removeSubject = async (name: string) => {
         const updated = subjects.filter(x => x.name !== name)
         setSubjects(updated)
         setMessage({ text: `"${name}" removed`, type: 'ok' })
-
         try {
-            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
-            await fetch(`${BASE}/api/profile/subjects`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ uid, subjects: updated.map(s => s.name) }),
-            })
-        } catch { }
+            await api.subjects.update(uid!, updated.map(s => s.name))
+        } catch (e: any) {
+            console.error("Sync failed", e)
+            setMessage({ text: 'Sync failed: ' + e.message, type: 'err' })
+        }
     }
 
     const handleUpload = async (subject: string, file: File) => {
@@ -162,10 +157,10 @@ export default function SubjectsPage() {
                                             />
                                             <button
                                                 onClick={() => fileRefs.current[s.name]?.click()}
-                                                disabled={uploading === s.name}
+                                                disabled={uploading === s.name || s.indexing}
                                                 style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--text-secondary)', fontSize: '13px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
                                             >
-                                                {uploading === s.name ? '⏳ Indexing...' : s.index_ready ? '🔄 Re-upload PDF' : '📄 Upload PDF'}
+                                                {uploading === s.name || s.indexing ? '⏳ Indexing...' : s.index_ready ? '🔄 Re-upload PDF' : '📄 Upload PDF'}
                                             </button>
 
                                             {/* Edit name */}

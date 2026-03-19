@@ -45,6 +45,8 @@ export const api = {
   },
   subjects: {
     list: (uid: string) => request<any[]>(`/api/subjects/${uid}`),
+    update: (uid: string, subjects: string[]) =>
+      request<any>('/api/profile/subjects', { method: 'POST', body: JSON.stringify({ uid, subjects }) }),
     upload: (uid: string, subject: string, file: File) => {
       const form = new FormData()
       form.append('uid', uid)

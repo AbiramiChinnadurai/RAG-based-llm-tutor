@@ -4,7 +4,8 @@ venv/
 env/
 ENV/
 bin/
-lib/
+# lib/ (Un-anchor this to avoid ignoring frontend/src/lib)
+/lib/
 share/
 
 # Python Cache

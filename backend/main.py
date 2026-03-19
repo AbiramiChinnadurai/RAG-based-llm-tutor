@@ -1,7 +1,7 @@
 import os, sys, json, asyncio, tempfile
 from pathlib import Path
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -232,23 +232,52 @@ def plan_generate(req: PlanRequest):
 
     return {"plan": plan_text}
 
-@app.post("/api/syllabus/upload")
-async def upload_syllabus(uid: str=Form(...), subject: str=Form(...), file: UploadFile=File(...)):
-    if not file.filename.endswith(".pdf"): raise HTTPException(400, "Only PDFs accepted")
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(await file.read()); tmp_path = tmp.name
+def process_syllabus_task(subject: str, tmp_path: str):
+    """Heavy lifting moved to background to avoid Render 30s timeout."""
     try:
+        print(f"[Background] Starting processing for {subject} ...")
         num_chunks, full_text = build_faiss_index(subject, tmp_path)
         save_subject_content(subject, full_text) # Save text to Supabase
         topics = extract_topics_from_pdf(tmp_path)
+        
+        from database.db import save_topics
+        save_topics(subject, topics)
+        
+        # KG building is the slowest part
         try:
-            from database.db import save_topics
-            save_topics(subject, topics)
-            kg = build_knowledge_graph(subject, topics, get_client())
-            kg_stats = kg.stats() if kg else {}
-        except: kg_stats = {}
-        return {"subject":subject,"chunks":num_chunks,"topics":topics,"kg_nodes":kg_stats.get("nodes",0),"kg_edges":kg_stats.get("edges",0),"index_ready":True}
-    finally: os.unlink(tmp_path)
+            build_knowledge_graph(subject, topics, get_client())
+        except Exception as e:
+            print(f"[Background] KG Build Error: {e}")
+            
+        print(f"[Background] Completed processing for {subject}")
+    except Exception as e:
+        print(f"[Background] Processing Error: {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+@app.post("/api/syllabus/upload")
+async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...), subject: str=Form(...), file: UploadFile=File(...)):
+    if not file.filename.endswith(".pdf"): 
+        raise HTTPException(400, "Only PDFs accepted")
+    
+    # Save to temp file immediately
+    fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(fd, 'wb') as tmp:
+            tmp.write(await file.read())
+        
+        # Start background processing
+        background_tasks.add_task(process_syllabus_task, subject, tmp_path)
+        
+        return {
+            "subject": subject,
+            "message": "Indexing started in background. Please check back in a minute.",
+            "index_ready": True # Optimistically set to True or let frontend poll
+        }
+    except Exception as e:
+        if os.path.exists(tmp_path): os.unlink(tmp_path)
+        raise HTTPException(500, str(e))
 
 @app.get("/api/subjects/{uid}")
 def get_subjects(uid: str):

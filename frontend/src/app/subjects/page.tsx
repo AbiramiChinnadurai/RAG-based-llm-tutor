@@ -57,7 +57,8 @@ export default function SubjectsPage() {
         setUploading(subject); setMessage(null)
         try {
             const res = await api.subjects.upload(uid!, subject, file)
-            setMessage({ text: `✅ ${res.chunks} chunks indexed, ${res.topics?.length || 0} topics extracted!`, type: 'ok' })
+            const msg = res.message || `✅ ${res.chunks} chunks indexed, ${res.topics?.length || 0} topics extracted!`
+            setMessage({ text: msg, type: 'ok' })
             load()
         } catch (e: any) {
             setMessage({ text: '❌ ' + e.message, type: 'err' })

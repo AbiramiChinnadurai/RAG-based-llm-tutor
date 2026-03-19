@@ -266,6 +266,21 @@ async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...),
     if not file.filename.endswith(".pdf"): 
         raise HTTPException(400, "Only PDFs accepted")
     
+    # --- FALLBACK: Add subject to profile if missing ---
+    try:
+        from database.db import get_profile, update_subject_list
+        profile = get_profile(uid)
+        if profile:
+            raw_list = profile.get("subject_list") or ""
+            current_subjects = [s.strip() for s in raw_list.split(",") if s.strip()]
+            if subject not in current_subjects:
+                print(f"[Upload Fallback] Adding {subject} to profile for UID {uid}")
+                current_subjects.append(subject)
+                update_subject_list(uid, current_subjects)
+    except Exception as e:
+        print(f"[Upload Fallback] Error: {e}")
+    # --------------------------------------------------
+
     # Save to temp file immediately
     fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
     try:

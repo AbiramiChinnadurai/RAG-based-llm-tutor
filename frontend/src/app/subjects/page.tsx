@@ -32,7 +32,8 @@ export default function SubjectsPage() {
             await api.subjects.update(uid!, updated.map(s => s.name))
         } catch (e: any) {
             console.error("Sync failed", e)
-            setMessage({ text: 'Sync failed: ' + e.message, type: 'err' })
+            const detail = e.response?.data?.detail || e.message || JSON.stringify(e)
+            setMessage({ text: 'Sync failed: ' + detail, type: 'err' })
         }
     }
 
@@ -44,7 +45,8 @@ export default function SubjectsPage() {
             await api.subjects.update(uid!, updated.map(s => s.name))
         } catch (e: any) {
             console.error("Sync failed", e)
-            setMessage({ text: 'Sync failed: ' + e.message, type: 'err' })
+            const detail = e.response?.data?.detail || e.message || JSON.stringify(e)
+            setMessage({ text: 'Sync failed: ' + detail, type: 'err' })
         }
     }
 

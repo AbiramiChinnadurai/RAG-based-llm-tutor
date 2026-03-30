@@ -8,8 +8,14 @@ export default function HomePage() {
   const { uid, login } = useAuth()
   const router = useRouter()
   const [tab, setTab] = useState<'login' | 'register'>('login')
+  const [mounted, setMounted] = useState(false)
 
-  useEffect(() => { if (uid) router.replace('/dashboard') }, [uid, router])
+  useEffect(() => { 
+    setMounted(true)
+    if (uid) router.replace('/dashboard') 
+  }, [uid, router])
+
+  if (!mounted) return null
 
   return (
     <div style={{

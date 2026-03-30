@@ -6,7 +6,6 @@ LLM inference via Groq API (LLaMA-3 8B) — free, fast, no local setup needed.
 import os
 import json
 import re
-import streamlit as st
 from groq import Groq
 
 MODEL_NAME = "llama-3.1-8b-instant"
@@ -15,30 +14,23 @@ def get_client():
     api_key = os.environ.get("GROQ_API_KEY", "")
     if not api_key:
         try:
-            # Fallback for Streamlit
-            if hasattr(st, "secrets"):
-                if "supabase" in st.secrets and "GROQ_API_KEY" in st.secrets["supabase"]:
-                    api_key = st.secrets["supabase"]["GROQ_API_KEY"]
-                elif "GROQ_API_KEY" in st.secrets:
-                    api_key = st.secrets["GROQ_API_KEY"]
-            
-            # Manual TOML loader for uvicorn/direct script
-            if not api_key:
-                import tomllib # Python 3.11+
-                for p in [".streamlit/secrets.toml", "../.streamlit/secrets.toml"]:
-                    if os.path.exists(p):
-                        with open(p, "rb") as f:
-                            data = tomllib.load(f)
-                            if "supabase" in data and "GROQ_API_KEY" in data["supabase"]:
-                                api_key = data["supabase"]["GROQ_API_KEY"]
-                            elif "GROQ_API_KEY" in data:
-                                api_key = data["GROQ_API_KEY"]
-                        if api_key: break
+            # Manual TOML loader for local dev (secrets.toml in project root)
+            import tomllib # Python 3.11+
+            # Check current dir, project root, and .streamlit (legacy)
+            for p in ["secrets.toml", ".streamlit/secrets.toml", "../secrets.toml"]:
+                if os.path.exists(p):
+                    with open(p, "rb") as f:
+                        data = tomllib.load(f)
+                        if "supabase" in data and "GROQ_API_KEY" in data["supabase"]:
+                            api_key = data["supabase"]["GROQ_API_KEY"]
+                        elif "GROQ_API_KEY" in data:
+                            api_key = data["GROQ_API_KEY"]
+                    if api_key: break
         except Exception:
             pass
             
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY not found. Please set it in .streamlit/secrets.toml or as an environment variable.")
+        raise RuntimeError("GROQ_API_KEY not found. Please set it as an environment variable or in a local secrets.toml file.")
     return Groq(api_key=api_key)
 
 

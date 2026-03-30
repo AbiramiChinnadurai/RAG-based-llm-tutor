@@ -8,26 +8,22 @@ Setup:
   2. Add to .streamlit/secrets.toml:
        [supabase]
        DATABASE_URL = "postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
-  3. Or set environment variable: DATABASE_URL=...
+  3. Set environment variable: DATABASE_URL=...
 """
 
 import os
 import psycopg2
 import psycopg2.extras
-import streamlit as st
 from datetime import datetime
 import bcrypt
 
 # ── CONNECTION ────────────────────────────────────────────────────────────────
 
 def _get_db_url():
-    try:
-        return st.secrets["supabase"]["DATABASE_URL"]
-    except Exception:
-        url = os.environ.get("DATABASE_URL")
-        if not url:
-            raise RuntimeError("DATABASE_URL not found in .streamlit/secrets.toml")
-        return url
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError("DATABASE_URL not found in environment variables.")
+    return url
 
 
 def get_connection():
@@ -212,11 +208,62 @@ def init_db():
         FOREIGN KEY (uid) REFERENCES learner_profile(uid)
     )''')
 
-    # -- Subject Full Text (Zero-Budget Persistence) --
+    # -- Subject Metadata (Deadline & Purpose) --
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS learner_subjects (
+        uid         INTEGER,
+        subject     TEXT,
+        deadline    TEXT,
+        purpose     TEXT,
+        PRIMARY KEY (uid, subject),
+        FOREIGN KEY (uid) REFERENCES learner_profile(uid)
+    )''')
+
+    # -- Persistence: Raw Subject Content --
     c.execute('''
     CREATE TABLE IF NOT EXISTS subject_content (
-        subject     TEXT PRIMARY KEY,
-        full_text   TEXT
+        subject    TEXT PRIMARY KEY,
+        full_text  TEXT
+    )''')
+
+    # -- Projects Layer --
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS learner_projects (
+        id          SERIAL PRIMARY KEY,
+        uid         INTEGER,
+        subject     TEXT,
+        topic       TEXT,
+        title       TEXT,
+        description TEXT,
+        requirements TEXT,
+        starter_code TEXT,
+        status       TEXT DEFAULT 'pending',
+        timestamp    TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (uid) REFERENCES learner_profile(uid)
+    )''')
+
+    # -- Peer Challenges Layer --
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS challenge_rooms (
+        room_code       TEXT PRIMARY KEY,
+        uid             INTEGER,
+        subject         TEXT,
+        topic           TEXT,
+        questions       TEXT,
+        created_at      TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (uid) REFERENCES learner_profile(uid)
+    )''')
+
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS challenge_scores (
+        id              SERIAL PRIMARY KEY,
+        room_code       TEXT,
+        uid             INTEGER,
+        score           INTEGER,
+        total           INTEGER,
+        completed_at    TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (room_code) REFERENCES challenge_rooms(room_code),
+        FOREIGN KEY (uid) REFERENCES learner_profile(uid)
     )''')
 
     conn.commit()
@@ -249,7 +296,7 @@ def create_profile(name, age, education_level, subject_list, daily_hours, deadli
     uid = c.fetchone()["uid"]
     conn.commit()
     conn.close()
-    return uid
+    return str(uid)
 
 def get_profile_by_email(email: str, password: str):
     """Lookup profile by email and verify password. Returns profile dict or None."""
@@ -261,6 +308,7 @@ def get_profile_by_email(email: str, password: str):
     if not row:
         return None
     row = dict(row)
+    row["uid"] = str(row["uid"])
     stored_hash = row.get("password_hash") or ""
     if not stored_hash or not verify_password(password, stored_hash):
         return None
@@ -273,7 +321,11 @@ def get_profile(uid):
     c.execute("SELECT * FROM learner_profile WHERE uid = %s", (uid,))
     row = c.fetchone()
     conn.close()
-    return dict(row) if row else None
+    if row:
+        res = dict(row)
+        res["uid"] = str(res["uid"])
+        return res
+    return None
 
 
 def get_all_profiles():
@@ -772,6 +824,78 @@ def get_socratic_sessions(uid, subject=None, topic=None):
     c.execute(query, tuple(params))
     rows = c.fetchall()
     conn.close()
+    return [dict(r) for r in rows]
+
+# ── CHALLENGE ROOMS ───────────────────────────────────────────────────────────
+
+def create_challenge_room(uid, subject, topic, questions):
+    import random, string, json
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Generate random 6-char code
+    for _ in range(10):  # Try 10 times to avoid collision
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        c.execute("SELECT 1 FROM challenge_rooms WHERE room_code=%s", (code,))
+        if not c.fetchone():
+            break
+            
+    c.execute("""
+        INSERT INTO challenge_rooms (room_code, uid, subject, topic, questions)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (code, uid, subject, topic, json.dumps(questions)))
+    conn.commit()
+    conn.close()
+    return code
+
+def get_challenge_room(room_code):
+    import json
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT r.*, p.name as creator_name
+        FROM challenge_rooms r
+        LEFT JOIN learner_profile p ON r.uid = p.uid
+        WHERE room_code=%s
+    """, (room_code,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        res = dict(row)
+        res["questions"] = json.loads(res["questions"])
+        return res
+    return None
+
+def submit_challenge_score(room_code, uid, score, total):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO challenge_scores (room_code, uid, score, total)
+        VALUES (%s, %s, %s, %s)
+    """, (room_code, uid, score, total))
+    conn.commit()
+    conn.close()
+
+def get_challenge_leaderboard(room_code):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        SELECT s.*, p.name
+        FROM challenge_scores s
+        JOIN learner_profile p ON s.uid = p.uid
+        WHERE room_code=%s
+        ORDER BY score DESC, completed_at ASC
+    """, (room_code,))
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+        
+    query += " ORDER BY timestamp DESC"
+    
+    c.execute(query, tuple(params))
+    rows = c.fetchall()
+    conn.close()
     
     if not rows:
         return []
@@ -794,7 +918,7 @@ def log_study_interaction(uid, subject, topic, question, answer, modality, laten
     cur.execute(
         """
         INSERT INTO study_logs
-        (user_id, subject, topic, question, answer, modality, latency, chunks_used)
+        (uid, subject, topic, question, answer, modality, latency, chunks_used)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
         """,
         (uid, subject, topic, question, answer, modality, latency, chunks)
@@ -826,12 +950,78 @@ def get_subject_content(subject):
     return row["full_text"] if row else None
 
 def update_subject_list(uid, subjects):
-    """Update the learner's subject list."""
+    """Update the learner's subject list in learner_profile and ensure learner_subjects entries exist."""
     conn = get_connection()
     c = conn.cursor()
+    # 1. Update the comma-separated list for legacy compatibility
     c.execute(
         "UPDATE learner_profile SET subject_list = %s WHERE uid = %s",
         (", ".join(subjects), uid)
     )
+    # 2. Ensure entries exist in learner_subjects
+    for s in subjects:
+        c.execute("""
+            INSERT INTO learner_subjects (uid, subject)
+            VALUES (%s, %s)
+            ON CONFLICT (uid, subject) DO NOTHING
+        """, (uid, s))
+    # 3. Cleanup removed subjects from metadata table
+    if subjects:
+        placeholders = ", ".join(["%s"] * len(subjects))
+        c.execute(f"DELETE FROM learner_subjects WHERE uid = %s AND subject NOT IN ({placeholders})", (uid, *subjects))
+    else:
+        c.execute("DELETE FROM learner_subjects WHERE uid = %s", (uid,))
+        
     conn.commit()
     conn.close()
+
+def save_subject_metadata(uid, subject, deadline, purpose):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO learner_subjects (uid, subject, deadline, purpose)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (uid, subject) DO UPDATE SET
+            deadline = EXCLUDED.deadline,
+            purpose = EXCLUDED.purpose
+    """, (uid, subject, deadline, purpose))
+    conn.commit()
+    conn.close()
+
+def get_subjects_with_metadata(uid):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM learner_subjects WHERE uid = %s", (uid,))
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+# ── LEARNER PROJECTS ────────────────────────────────────────────────────────
+def save_project(uid, subject, topic, title, description, requirements, starter_code):
+    import json
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO learner_projects (uid, subject, topic, title, description, requirements, starter_code)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (uid, subject, topic, title, description, json.dumps(requirements), starter_code))
+    pid = c.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    return pid
+
+def get_projects(uid, subject):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM learner_projects WHERE uid = %s AND subject = %s ORDER BY timestamp DESC", (uid, subject))
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def update_project_status(project_id, status):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE learner_projects SET status = %s WHERE id = %s", (status, project_id))
+    conn.commit()
+    conn.close()

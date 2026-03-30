@@ -163,7 +163,10 @@ export default function DashboardPage() {
                                     return (
                                         <div key={s.subject}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                                                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{s.subject}</div>
+                                                <div>
+                                                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{s.subject}</div>
+                                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{s.total_attempts} {s.total_attempts === 1 ? 'quiz' : 'quizzes'} taken</div>
+                                                </div>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                     <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px', background: theme.bg, color: theme.color }}>{s.strength_label}</span>
                                                     <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', width: '40px', textAlign: 'right' }}>{s.avg_accuracy.toFixed(0)}%</span>

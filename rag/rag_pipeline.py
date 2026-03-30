@@ -262,13 +262,12 @@ def extract_topics_from_pdf(pdf_path):
         words = t.split()
         lower_t = t.lower()
 
-        # Minimum 3 words OR minimum 15 characters
-        if len(words) < 3 and len(t) < 15:
+        # Relaxed filters for Technical Terms (Arrays, Queues, etc)
+        # Minimum 5 characters
+        if len(t) < 5:
             continue
             
-        # Skip if it matches: single words, numbers only, roman numerals
-        if len(words) == 1:
-            continue
+        # Skip if it matches: numbers only, roman numerals
         if t.isdigit():
             continue
         if lower_t in roman_numerals:
@@ -293,14 +292,6 @@ def extract_topics_from_pdf(pdf_path):
             
         # Skip chapter/page labels that are just "Chapter X" or "Page X" with no description
         if re.match(r"^(Chapter|Page)\s+\d+$", t, re.IGNORECASE):
-            continue
-            
-        # Skip if ALL words are capitalized (likely a header artifact)
-        if t.isupper():
-            continue
-            
-        # Skip if length < 10 characters total
-        if len(t) < 10:
             continue
             
         # Filter "Introduction to"

@@ -25,14 +25,10 @@ export default function RoadmapPage() {
     const loadPlan = async () => {
         if (!uid) return
         try {
-            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
-            const res = await fetch(`${BASE}/api/plan/${uid}`)
-            if (res.ok) {
-                const data = await res.json()
-                setPlanText(data.plan_text)
-                setPlanId(data.plan_id)
-                setDays(data.days || parseDays(data.plan_text))
-            }
+            const data = await api.plan.get(uid)
+            setPlanText(data.plan_text)
+            setPlanId(data.plan_id)
+            setDays(data.days || parseDays(data.plan_text))
         } catch { }
         finally { setLoading(false) }
     }
@@ -78,11 +74,7 @@ export default function RoadmapPage() {
         const updated = days.map(d => d.day_number === dayNum ? { ...d, status } : d)
         setDays(updated)
         try {
-            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
-            await fetch(`${BASE}/api/plan/${uid}/day/${dayNum}/status`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status }),
-            })
+            await api.plan.updateStatus(uid!, dayNum, status)
             if (status === 'completed') { setMessage('🎉 +20 XP earned!'); setTimeout(() => setMessage(''), 3000) }
             await loadStats()
         } catch { }
@@ -207,7 +199,7 @@ export default function RoadmapPage() {
                             }
 
                             return (
-                                <div key={day.day_number}>
+                                <div key={`day-${day.day_number}-${idx}`}>
                                     {milestones[day.day_number] && (
                                         <div style={{ textAlign: 'center', padding: '8px', fontSize: '12px', color: '#fbbf24', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
                                             {milestones[day.day_number]}

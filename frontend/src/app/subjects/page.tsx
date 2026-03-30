@@ -12,12 +12,14 @@ export default function SubjectsPage() {
     const [message, setMessage] = useState<{ text: string; type: 'ok' | 'err' } | null>(null)
     const [editingName, setEditingName] = useState<string | null>(null)
     const [editVal, setEditVal] = useState('')
+    const [metaInputs, setMetaInputs] = useState<Record<string, { deadline: string; purpose: string }>>({})
     const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
     const load = () => { if (uid) api.subjects.list(uid).then(setSubjects).catch(console.error) }
     useEffect(() => { load() }, [uid])
 
     const addSubject = async () => {
+        if (!uid) { setMessage({ text: 'Error: Not logged in', type: 'err' }); return }
         const name = newSubject.trim()
         if (!name) return
         if (subjects.find(s => s.name.toLowerCase() === name.toLowerCase())) {
@@ -38,6 +40,7 @@ export default function SubjectsPage() {
     }
 
     const removeSubject = async (name: string) => {
+        if (!uid) return
         const updated = subjects.filter(x => x.name !== name)
         setSubjects(updated)
         setMessage({ text: `"${name}" removed`, type: 'ok' })
@@ -51,10 +54,11 @@ export default function SubjectsPage() {
     }
 
     const handleUpload = async (subject: string, file: File) => {
+        const meta = metaInputs[subject] || { deadline: '', purpose: '' }
         setUploading(subject); setMessage(null)
         try {
-            const res = await api.subjects.upload(uid!, subject, file)
-            const msg = res.message || `✅ ${res.chunks} chunks indexed, ${res.topics?.length || 0} topics extracted!`
+            const res = await api.subjects.upload(uid!, subject, file, meta.deadline, meta.purpose)
+            const msg = res.message || `✅ Indexing started in background!`
             setMessage({ text: msg, type: 'ok' })
             load()
         } catch (e: any) {
@@ -134,14 +138,40 @@ export default function SubjectsPage() {
                                                 <button onClick={() => setEditingName(null)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', fontSize: '13px' }}>Cancel</button>
                                             </div>
                                         ) : (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>{s.name}</span>
-                                                <span className={`badge ${s.index_ready ? 'badge-green' : 'badge-amber'}`}>
-                                                    {s.index_ready ? '✓ Indexed' : 'No PDF'}
-                                                </span>
-                                                {s.topics?.length > 0 && (
-                                                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{s.topics.length} topics</span>
-                                                )}
+                                            <div>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                    <span style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text-primary)' }}>{s.name}</span>
+                                                    <span className={`badge ${s.index_ready ? 'badge-green' : 'badge-amber'}`}>
+                                                        {s.index_ready ? '✓ Indexed' : 'No PDF'}
+                                                    </span>
+                                                    {s.topics?.length > 0 && (
+                                                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{s.topics.length} topics</span>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* Metadata Inputs */}
+                                                <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase' }}>Target Deadline</div>
+                                                        <input 
+                                                            className="input" 
+                                                            placeholder="e.g. May 15th" 
+                                                            style={{ padding: '6px 12px', fontSize: '12px' }}
+                                                            value={metaInputs[s.name]?.deadline ?? s.deadline ?? ''}
+                                                            onChange={e => setMetaInputs(m => ({ ...m, [s.name]: { ...(m[s.name] || { purpose: s.purpose || '' }), deadline: e.target.value } }))}
+                                                        />
+                                                    </div>
+                                                    <div style={{ flex: 2 }}>
+                                                        <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '4px', textTransform: 'uppercase' }}>Learning Purpose</div>
+                                                        <input 
+                                                            className="input" 
+                                                            placeholder="e.g. Master algorithms for interviews" 
+                                                            style={{ padding: '6px 12px', fontSize: '12px' }}
+                                                            value={metaInputs[s.name]?.purpose ?? s.purpose ?? ''}
+                                                            onChange={e => setMetaInputs(m => ({ ...m, [s.name]: { ...(m[s.name] || { deadline: s.deadline || '' }), purpose: e.target.value } }))}
+                                                        />
+                                                    </div>
+                                                </div>
                                             </div>
                                         )}
                                     </div>

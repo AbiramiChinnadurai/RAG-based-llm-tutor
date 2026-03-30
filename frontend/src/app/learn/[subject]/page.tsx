@@ -448,6 +448,16 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
                     } catch { }
                 }
             }
+
+            // After stream is done, attempt to parse score for logging
+            setTeachMeBackFeedback(final => {
+                const scoreMatch = final.match(/(\d+)\s*\/\s*10/) || final.match(/score:\s*(\d+)/i)
+                if (scoreMatch) {
+                    const score = parseInt(scoreMatch[1])
+                    api.seem.submit({ uid, subject, topic, score, total: 10 }).catch(console.error)
+                }
+                return final
+            })
         } catch (e: any) {
             setTeachMeBackFeedback('Error: ' + e.message)
         } finally {
@@ -1091,7 +1101,10 @@ function HeatmapPanel({ uid, subject, onSelectTopic }: { uid: string; subject: s
                 {data.map((item, i) => (
                     <div 
                         key={i} 
-                        onClick={() => onSelectTopic(item.topic)}
+                        onClick={() => {
+                            api.heatmap.log({ uid, subject, topic_clicked: item.topic, tile_colour: item.strength_label }).catch(console.error)
+                            onSelectTopic(item.topic)
+                        }}
                         style={{ 
                             padding: '16px', borderRadius: '12px', border: '1px solid var(--border)', cursor: 'pointer', transition: 'all 0.2s',
                             background: item.strength_label === 'Strong' ? 'rgba(34, 197, 94, 0.1)' : 

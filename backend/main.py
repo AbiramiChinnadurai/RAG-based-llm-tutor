@@ -82,8 +82,24 @@ class ProjectGenerateRequest(BaseModel):
 class ProjectStatusRequest(BaseModel):
     status: str
 
-class AELOverrideRequest(BaseModel):
-    uid: str; subject: str; topic: str; modality: int
+class AelOverrideRequest(BaseModel):
+    uid: str
+    subject: str
+    topic: str
+    modality: int
+
+class HeatmapLogRequest(BaseModel):
+    uid: str
+    subject: str
+    topic_clicked: str
+    tile_colour: str
+
+class SeemSubmitRequest(BaseModel):
+    uid: str
+    subject: str
+    topic: str
+    score: int
+    total: int = 10
 
 class ChallengeCreateRequest(BaseModel):
     uid: str; subject: str; topic: str
@@ -513,4 +529,18 @@ def get_heatmap(uid: str, subject: str):
         else: label = 'Weak'
         result.append({'topic': topic, 'attempts': attempts, 'avg_accuracy': avg_acc, 'strength_label': label})
     return result
+
+
+@app.post("/api/profile/{uid}/heatmap/log")
+def log_heatmap_click_endpoint(uid: str, req: HeatmapLogRequest):
+    from database.db import log_heatmap_interaction
+    log_heatmap_interaction(req.uid, req.subject, req.topic_clicked, req.tile_colour)
+    return {"ok": True}
+
+
+@app.post("/api/seem/submit")
+def submit_seem_evaluation(req: SeemSubmitRequest):
+    from database.db import log_seem_attempt
+    missed = log_seem_attempt(req.uid, req.subject, req.topic, req.score, req.total)
+    return {"ok": True, "missed_points": missed}
 

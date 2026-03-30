@@ -266,6 +266,32 @@ def init_db():
         FOREIGN KEY (uid) REFERENCES learner_profile(uid)
     )''')
 
+    # -- SEEM: Self-Explanation Evaluation Mode --
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS seem_attempts (
+        id              SERIAL PRIMARY KEY,
+        uid             INTEGER,
+        subject         TEXT,
+        topic           TEXT,
+        score           INTEGER,
+        correct_points  INTEGER,
+        missed_points   INTEGER,
+        timestamp       TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (uid) REFERENCES learner_profile(uid)
+    )''')
+
+    # -- Heatmap: Interaction Tracking --
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS heatmap_interactions (
+        id              SERIAL PRIMARY KEY,
+        uid             INTEGER,
+        subject         TEXT,
+        topic_clicked   TEXT,
+        tile_colour     TEXT,
+        timestamp       TIMESTAMP DEFAULT NOW(),
+        FOREIGN KEY (uid) REFERENCES learner_profile(uid)
+    )''')
+
     conn.commit()
     conn.close()
 
@@ -482,13 +508,13 @@ def update_ael(uid, subject, topic, recent_accuracies):
 
 # ── ERROR TOPICS ──────────────────────────────────────────────────────────────
 
-def log_error_topic(uid, subject, topic):
+def log_error_topic(uid, subject, topic, weight=1):
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
-        INSERT INTO error_topics (uid, subject, topic, count) VALUES (%s, %s, %s, 1)
-        ON CONFLICT (uid, subject, topic) DO UPDATE SET count = error_topics.count + 1
-    """, (uid, subject, topic))
+        INSERT INTO error_topics (uid, subject, topic, count) VALUES (%s, %s, %s, %s)
+        ON CONFLICT (uid, subject, topic) DO UPDATE SET count = error_topics.count + EXCLUDED.count
+    """, (uid, subject, topic, weight))
     conn.commit()
     conn.close()
 
@@ -503,6 +529,36 @@ def get_error_topics(uid, subject):
     rows = c.fetchall()
     conn.close()
     return [r["topic"] for r in rows]
+
+
+def log_seem_attempt(uid, subject, topic, score, total=10):
+    correct = score
+    missed = max(0, total - score)
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO seem_attempts (uid, subject, topic, score, correct_points, missed_points)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    """, (uid, subject, topic, score, correct, missed))
+    
+    # Core architectural claim: SEEM missed points update error topics
+    if missed > 0:
+        log_error_topic(uid, subject, topic, weight=missed)
+        
+    conn.commit()
+    conn.close()
+    return missed
+
+
+def log_heatmap_interaction(uid, subject, topic_clicked, tile_colour):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO heatmap_interactions (uid, subject, topic_clicked, tile_colour)
+        VALUES (%s, %s, %s, %s)
+    """, (uid, subject, topic_clicked, tile_colour))
+    conn.commit()
+    conn.close()
 
 
 # ── LEARNING PLANS ────────────────────────────────────────────────────────────

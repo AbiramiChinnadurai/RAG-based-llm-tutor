@@ -86,7 +86,15 @@ export const api = {
     leaderboard: (room_code: string) => request<any[]>(`/api/challenge/${room_code}/leaderboard`)
   },
   kg:      { get: (subject: string) => request<any>(`/api/kg/${subject}`) },
-  heatmap: { get: (uid: string, subject: string) => request<any[]>(`/api/profile/${uid}/heatmap/${encodeURIComponent(subject)}`) },
+  heatmap: { 
+    get: (uid: string, subject: string) => request<any[]>(`/api/profile/${uid}/heatmap/${encodeURIComponent(subject)}`),
+    log: (data: { uid: string; subject: string; topic_clicked: string; tile_colour: string }) => 
+      request<any>(`/api/profile/${data.uid}/heatmap/log`, { method: 'POST', body: JSON.stringify(data) })
+  },
+  seem: {
+    submit: (data: { uid: string; subject: string; topic: string; score: number; total: number }) =>
+      request<any>('/api/seem/submit', { method: 'POST', body: JSON.stringify(data) })
+  },
 
   health:  () => request<any>('/api/health'),
 }

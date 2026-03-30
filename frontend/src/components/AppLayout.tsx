@@ -11,7 +11,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setReady(true)
-    if (!uid) router.replace('/')
+    const storedUid = typeof window !== 'undefined' ? localStorage.getItem('llmits_uid') : null;
+    if (!uid && !storedUid) router.replace('/')
   }, [uid, router])
 
   if (!ready) return null

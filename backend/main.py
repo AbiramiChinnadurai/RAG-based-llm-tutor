@@ -20,9 +20,13 @@ from database.db import (
     log_quiz_attempt, get_xp, get_streak, get_level_title,
     get_xp_progress, add_xp, update_streak,
     save_learning_plan, log_error_topic, get_error_topics,
-    get_ael_modality, save_subject_content, get_subject_content, # Added these
+    get_ael_modality, set_ael_modality, save_subject_content, get_subject_content,
+    get_subjects_with_metadata, update_subject_list, save_subject_metadata,
+    save_plan_days, get_plan_days, update_day_status, get_latest_plan_id,
+    get_latest_plan, save_project, get_projects, update_project_status,
+    create_challenge_room, get_challenge_room, submit_challenge_score, get_challenge_leaderboard
 )
-from llm.llm_engine import get_client, generate_explanation, generate_quiz_question, generate_learning_plan
+from llm.llm_engine import get_client, generate_explanation, generate_quiz_question, generate_learning_plan, generate_project, generate_challenge_questions
 from rag.rag_pipeline import build_faiss_index, retrieve_chunks, format_context, index_exists, extract_topics_from_pdf, build_index_from_text # Added build_index_from_text
 from emotion.emotion_engine import detect_emotion, get_emotion_prompt_modifier
 from xai.xai_engine import build_xai_explanation, get_xai_system_note
@@ -39,7 +43,11 @@ INDEXING_IN_PROGRESS = set()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://llm-tutor-frontend.vercel.app", # For production if needed
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,6 +76,21 @@ class PlanRequest(BaseModel): uid: str
 class EmotionRequest(BaseModel): text: str
 class XAIRequest(BaseModel):
     uid: str; subject: str; topic: str; query: str; accuracy: Optional[float] = 0.5
+
+class ProjectGenerateRequest(BaseModel):
+    uid: str; subject: str; topic: str
+
+class ProjectStatusRequest(BaseModel):
+    status: str
+
+class AELOverrideRequest(BaseModel):
+    uid: str; subject: str; topic: str; modality: int
+
+class ChallengeCreateRequest(BaseModel):
+    uid: str; subject: str; topic: str
+
+class ChallengeSubmitRequest(BaseModel):
+    uid: str; score: int; total: int
 
 @app.get("/")
 def read_root(): return {"message": "LLM-ITS Backend is LIVE", "docs": "/docs", "health": "/api/health"}
@@ -116,6 +139,34 @@ def get_profile_ep(uid: str):
     profile["subjects_list"] = [s.strip() for s in profile.get("subject_list","").split(",") if s.strip()]
     return profile
 
+@app.get("/api/profile/{uid}/subjects")
+def get_subjects(uid: str):
+    try:
+        raw_subjects = get_subjects_with_metadata(uid)
+
+        # --- FALLBACK: Sync if learner_subjects is empty but profile has subjects ---
+        if not raw_subjects:
+            profile = get_profile(uid)
+            if profile and profile.get("subject_list"):
+                print(f"[Subjects Sync] Migrating legacy subjects for UID {uid}")
+                subjects = [s.strip() for s in profile["subject_list"].split(",") if s.strip()]
+                if subjects:
+                    update_subject_list(uid, subjects)
+                    raw_subjects = get_subjects_with_metadata(uid)
+        # -------------------------------------------------------------------------
+
+        # Ensure indexing status is merged in
+        res = []
+        for s in raw_subjects:
+            s["index_ready"] = index_exists(s["subject"])
+            s["indexing"] = s["subject"] in INDEXING_IN_PROGRESS
+            s["name"] = s["subject"] # For frontend compatibility
+            s["topics"] = get_topics(s["subject"]) # Add topics
+            res.append(s)
+        return res
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
 @app.get("/api/profile/{uid}/stats")
 def get_stats(uid: str):
     xp = get_xp(uid); st = get_streak(uid)
@@ -161,11 +212,9 @@ async def chat(req: ChatRequest):
                 pass
         yield f"data: {json.dumps({'type':'meta','emotion': emotion_data,'modality':modality_idx})}\n\n"
         try:
-            full = generate_explanation(req.query, context, profile, modality_idx, history=req.history[-3:] if req.history else [], emotion_modifier=emotion_modifier)
-            words = full.split(" ")
-            for i, word in enumerate(words):
-                yield f"data: {json.dumps({'type':'token','text':word+(' ' if i<len(words)-1 else '')})}\n\n"
-                await asyncio.sleep(0.02)
+            from llm.llm_engine import generate_explanation_stream
+            for token in generate_explanation_stream(req.query, context, profile, modality_idx, history=req.history[-3:] if req.history else [], emotion_modifier=emotion_modifier):
+                yield f"data: {json.dumps({'type':'token','text':token})}\n\n"
             yield f"data: {json.dumps({'type':'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
@@ -205,7 +254,6 @@ def plan_generate(req: PlanRequest):
     plan_text = generate_learning_plan(profile, summaries, weak)
     
     try:
-        from database.db import save_learning_plan, get_latest_plan, save_plan_days
         deadline = profile.get("deadline", "End of semester")
         save_learning_plan(req.uid, plan_text, str(weak), str(summaries), deadline, 30)
         
@@ -229,7 +277,14 @@ def plan_generate(req: PlanRequest):
                     days_data.append({"day_number": i+1, "day_label": f"Day {i+1}", "content": content})
             
             if days_data:
-                save_plan_days(req.uid, saved["plan_id"], days_data)
+                # Deduplicate by day_number just in case
+                unique_days = []
+                seen_days = set()
+                for d in days_data:
+                    if d["day_number"] not in seen_days:
+                        unique_days.append(d)
+                        seen_days.add(d["day_number"])
+                save_plan_days(req.uid, saved["plan_id"], unique_days)
     except Exception as e:
         print("Error saving plan:", e)
 
@@ -241,10 +296,12 @@ def process_syllabus_task(subject: str, tmp_path: str):
     try:
         print(f"[Background] Starting processing for {subject} ...")
         num_chunks, full_text = build_faiss_index(subject, tmp_path)
+        print(f"[Background] Extracted {len(full_text)} chars and {num_chunks} chunks.")
+        if not full_text:
+            print(f"[Background] WARNING: No text extracted from {subject} PDF. RAG will not work!")
         save_subject_content(subject, full_text) # Save text to Supabase
         topics = extract_topics_from_pdf(tmp_path)
         
-        from database.db import save_topics
         save_topics(subject, topics)
         
         # KG building is the slowest part
@@ -262,13 +319,12 @@ def process_syllabus_task(subject: str, tmp_path: str):
             os.unlink(tmp_path)
 
 @app.post("/api/syllabus/upload")
-async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...), subject: str=Form(...), file: UploadFile=File(...)):
+async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...), subject: str=Form(...), file: UploadFile=File(...), deadline: str=Form(""), purpose: str=Form("")):
     if not file.filename.endswith(".pdf"): 
         raise HTTPException(400, "Only PDFs accepted")
     
     # --- FALLBACK: Add subject to profile if missing ---
     try:
-        from database.db import get_profile, update_subject_list
         profile = get_profile(uid)
         if profile:
             raw_list = profile.get("subject_list") or ""
@@ -277,8 +333,11 @@ async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...),
                 print(f"[Upload Fallback] Adding {subject} to profile for UID {uid}")
                 current_subjects.append(subject)
                 update_subject_list(uid, current_subjects)
+        
+        # Save metadata (deadline & purpose)
+        save_subject_metadata(uid, subject, deadline, purpose)
     except Exception as e:
-        print(f"[Upload Fallback] Error: {e}")
+        print(f"[Fallback] Error: {e}")
     # --------------------------------------------------
 
     # Save to temp file immediately
@@ -299,42 +358,19 @@ async def upload_syllabus(background_tasks: BackgroundTasks, uid: str=Form(...),
         if os.path.exists(tmp_path): os.unlink(tmp_path)
         raise HTTPException(500, str(e))
 
+class UpdateSubjectsRequest(BaseModel):
+    uid: str
+    subjects: List[str]
+
 @app.post("/api/profile/subjects")
 def update_subjects(req: UpdateSubjectsRequest):
     try:
         print(f"[Subjects] Updating list for UID {req.uid}: {req.subjects}")
-        from database.db import update_subject_list
         update_subject_list(req.uid, req.subjects)
         return {"ok": True}
     except Exception as e:
         print(f"[Subjects] Update Error: {e}")
         raise HTTPException(500, str(e))
-
-@app.get("/api/subjects/{uid}")
-def get_subjects(uid: str):
-    print(f"[Subjects] Loading for UID {uid}")
-    profile = get_profile(uid)
-    if not profile: 
-        print(f"[Subjects] Profile not found for UID {uid}")
-        raise HTTPException(404, "Profile not found")
-    
-    # Normalize subject list
-    raw_list = profile.get("subject_list") or ""
-    subjects = [s.strip() for s in raw_list.split(",") if s.strip()]
-    print(f"[Subjects] Found in DB: {subjects}")
-    
-    return [
-        {
-            "name": s, 
-            "index_ready": index_exists(s), 
-            "indexing": s in INDEXING_IN_PROGRESS, 
-            "topics": get_topics(s)
-        } for s in subjects
-    ]
-
-class UpdateSubjectsRequest(BaseModel):
-    uid: str
-    subjects: List[str]
 
 @app.post("/api/xai/explain")
 def xai_explain(req: XAIRequest):
@@ -367,7 +403,6 @@ def kg_get(subject: str):
 
 @app.get("/api/plan/{uid}")
 def get_plan(uid: str):
-    from database.db import get_latest_plan, get_plan_days, get_latest_plan_id
     saved = get_latest_plan(uid)
     if not saved:
         raise HTTPException(404, "No plan found")
@@ -377,7 +412,6 @@ def get_plan(uid: str):
 
 @app.post("/api/plan/{uid}/day/{day_number}/status")
 def update_day(uid: str, day_number: int, body: dict):
-    from database.db import update_day_status, get_latest_plan_id
     plan_id = get_latest_plan_id(uid)
     if not plan_id:
         raise HTTPException(404, "No plan found")
@@ -385,3 +419,99 @@ def update_day(uid: str, day_number: int, body: dict):
     if body.get("status") == "completed":
         add_xp(uid, 20)
     return {"ok": True}
+
+@app.get("/api/projects/{uid}/{subject}")
+def get_user_projects(uid: str, subject: str):
+    return get_projects(uid, subject)
+
+@app.post("/api/projects/generate")
+def create_user_project(req: ProjectGenerateRequest):
+    print(f"DEBUG: Projects/generate request received: {req}")
+    profile = get_profile(req.uid)
+    if not profile:
+        print(f"DEBUG: Profile NOT FOUND for uid='{req.uid}'")
+        # Let's see some valid UIDs
+        profiles = get_all_profiles()
+        print(f"DEBUG: Total profiles in DB: {len(profiles)}. Sample UIDs: {[p['uid'] for p in profiles[:5]]}")
+        raise HTTPException(404, f"Profile not found for uid={req.uid}")
+    
+    summaries = get_subject_summary(req.uid)
+    print(f"DEBUG: Found {len(summaries)} summaries for uid={req.uid}")
+    mastery = next((s.get("strength_label","Moderate") for s in summaries if s["subject"]==req.subject), "Moderate")
+    
+    print(f"DEBUG: Starting LLM generation for {req.topic} ({req.subject}) at {mastery}")
+    p = generate_project(req.subject, req.topic, mastery)
+    if not p:
+        print("DEBUG: LLM generation FAILED")
+        raise HTTPException(500, "Failed to generate project")
+    
+    project_id = save_project(req.uid, req.subject, req.topic, p["title"], p["description"], p["requirements"], p["starter_code"])
+    print(f"DEBUG: Project saved with ID={project_id}")
+    return {"id": project_id, **p}
+
+@app.post("/api/projects/{project_id}/status")
+def set_project_status(project_id: int, req: ProjectStatusRequest):
+    update_project_status(project_id, req.status)
+    return {"ok": True}
+
+@app.post("/api/ael/override")
+def ael_override(req: AELOverrideRequest):
+    try:
+        set_ael_modality(req.uid, req.subject, req.topic, req.modality)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/challenge/create")
+def challenge_create(req: ChallengeCreateRequest):
+    profile = get_profile(req.uid)
+    if not profile: raise HTTPException(404, "Not found")
+    summaries = get_subject_summary(req.uid)
+    mastery = next((s.get("strength_label","Moderate") for s in summaries if s["subject"]==req.subject), "Moderate")
+    
+    questions = generate_challenge_questions(req.subject, req.topic, mastery)
+    if not questions or len(questions) != 5:
+        raise HTTPException(500, "Failed to generate 5 challenge questions")
+        
+    code = create_challenge_room(req.uid, req.subject, req.topic, questions)
+    return {"room_code": code}
+
+@app.get("/api/challenge/{room_code}")
+def challenge_get(room_code: str):
+    room = get_challenge_room(room_code.upper())
+    if not room: raise HTTPException(404, "Room not found")
+    return room
+
+@app.post("/api/challenge/{room_code}/submit")
+def challenge_submit(room_code: str, req: ChallengeSubmitRequest):
+    submit_challenge_score(room_code.upper(), req.uid, req.score, req.total)
+    return {"ok": True}
+
+@app.get("/api/challenge/{room_code}/leaderboard")
+def challenge_leaderboard(room_code: str):
+    return get_challenge_leaderboard(room_code.upper())
+
+@app.get("/api/profile/{uid}/heatmap/{subject}")
+def get_heatmap(uid: str, subject: str):
+    topics = get_topics(subject)
+    history = get_quiz_history(uid, subject)
+    topic_stats: dict = {}
+    for attempt in history:
+        t = attempt.get('topic', '')
+        if not t: continue
+        if t not in topic_stats:
+            topic_stats[t] = {'attempts': 0, 'total_accuracy': 0.0}
+        topic_stats[t]['attempts'] += 1
+        topic_stats[t]['total_accuracy'] += float(attempt.get('accuracy_pct') or 0)
+    result = []
+    for topic in topics:
+        stats = topic_stats.get(topic, {'attempts': 0, 'total_accuracy': 0.0})
+        attempts = stats['attempts']
+        avg_acc = round(stats['total_accuracy'] / attempts, 1) if attempts > 0 else 0.0
+        if attempts == 0: label = 'Unattempted'
+        elif avg_acc >= 70: label = 'Strong'
+        elif avg_acc >= 40: label = 'Moderate'
+        else: label = 'Weak'
+        result.append({'topic': topic, 'attempts': attempts, 'avg_accuracy': avg_acc, 'strength_label': label})
+    return result
+

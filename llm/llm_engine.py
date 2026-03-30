@@ -12,17 +12,49 @@ from groq import Groq
 MODEL_NAME = "llama-3.1-8b-instant"
 
 def get_client():
-    try:
-        if "supabase" in st.secrets and "GROQ_API_KEY" in st.secrets["supabase"]:
-            api_key = st.secrets["supabase"]["GROQ_API_KEY"]
-        else:
-            api_key = st.secrets["GROQ_API_KEY"]
-    except Exception:
-        api_key = os.environ.get("GROQ_API_KEY", "")
+    api_key = os.environ.get("GROQ_API_KEY", "")
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY not found.")
+        try:
+            # Fallback for Streamlit
+            if hasattr(st, "secrets"):
+                if "supabase" in st.secrets and "GROQ_API_KEY" in st.secrets["supabase"]:
+                    api_key = st.secrets["supabase"]["GROQ_API_KEY"]
+                elif "GROQ_API_KEY" in st.secrets:
+                    api_key = st.secrets["GROQ_API_KEY"]
+            
+            # Manual TOML loader for uvicorn/direct script
+            if not api_key:
+                import tomllib # Python 3.11+
+                for p in [".streamlit/secrets.toml", "../.streamlit/secrets.toml"]:
+                    if os.path.exists(p):
+                        with open(p, "rb") as f:
+                            data = tomllib.load(f)
+                            if "supabase" in data and "GROQ_API_KEY" in data["supabase"]:
+                                api_key = data["supabase"]["GROQ_API_KEY"]
+                            elif "GROQ_API_KEY" in data:
+                                api_key = data["GROQ_API_KEY"]
+                        if api_key: break
+        except Exception:
+            pass
+            
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY not found. Please set it in .streamlit/secrets.toml or as an environment variable.")
     return Groq(api_key=api_key)
 
+
+def _call_stream(prompt, temperature=0.7, max_tokens=300):
+    """Real streaming from Groq."""
+    client = get_client()
+    stream = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
 
 def _call(prompt, temperature=0.7, max_tokens=300):
     client = get_client()
@@ -181,6 +213,11 @@ Generate a clear, structured day-by-day study schedule."""
 
 # ── LLM CALLS ─────────────────────────────────────────────────────────────────
 
+def generate_explanation_stream(query, context, profile, modality_index, history=None, emotion_modifier=""):
+    """Stream a personalized explanation."""
+    prompt = build_explanation_prompt(query, context, profile, modality_index, history, emotion_modifier)
+    return _call_stream(prompt, temperature=0.7, max_tokens=300)
+
 def generate_explanation(query, context, profile, modality_index, history=None, emotion_modifier=""):
     """Generate a personalized explanation using Groq. Emotion-aware when modifier is provided."""
     prompt = build_explanation_prompt(query, context, profile, modality_index, history, emotion_modifier)
@@ -205,6 +242,35 @@ def generate_quiz_question(subject, topic, mastery_level, previous_questions=Non
         print(f"[LLM] Quiz generation error: {e}")
         return None
 
+def generate_challenge_questions(subject, topic, mastery_level):
+    """Generate exactly 5 multiple choice questions for a peer challenge room."""
+    prompt = f"""Generate exactly 5 multiple choice questions about "{topic}" in {subject}.
+Difficulty: intermediate
+
+Return ONLY a valid JSON array of objects in this exact format, nothing else:
+[
+  {{
+    "question": "The question text here?",
+    "options": ["A) option one", "B) option two", "C) option three", "D) option four"],
+    "correct_index": 0,
+    "explanation": "Brief explanation."
+  }}
+]"""
+    try:
+        raw = _call(prompt, temperature=0.3, max_tokens=1500)
+        json_match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group())
+                return data
+            except Exception as j:
+                print(f"DEBUG: JSON Parse error: {j}")
+                return None
+        return None
+    except Exception as e:
+        print(f"[LLM] Challenge generation error: {e}")
+        return None
+
 
 def generate_learning_plan(profile, subject_summaries, weak_topics_by_subject):
     """Generate a personalized learning plan."""
@@ -213,3 +279,41 @@ def generate_learning_plan(profile, subject_summaries, weak_topics_by_subject):
         return _call(prompt, temperature=0.7, max_tokens=800)
     except Exception as e:
         return f"[Error generating plan: {e}]"
+
+def generate_project(subject, topic, mastery_level):
+    """
+    Suggest a hands-on coding project for a coding subject.
+    Returns JSON with title, description, requirements (list), and starter_code.
+    """
+    prompt = f"""You are an expert coding tutor. Generate a small hands-on coding project for a student studying {topic} in {subject}.
+Mastery Level: {mastery_level}
+
+Requirements:
+- Must be relevant to {topic}.
+- Should be achievable in 1-2 hours.
+- Provide 3-5 clear functional requirements.
+- Provide a short and clean starter code template.
+
+CRITICAL: Return ONLY a valid JSON object. Do not include any text before or after the JSON. Use double quotes for all keys and string values. Escape all newlines in starter_code and description as \\n.
+
+Example format:
+{{
+  "title": "Project Title",
+  "description": "Brief project overview",
+  "requirements": ["Requirement 1", "Requirement 2", "..."],
+  "starter_code": "Code block here"
+}}"""
+    try:
+        raw = _call(prompt, temperature=0.2, max_tokens=1000)
+        print(f"DEBUG: RAW LLM Project Response: {raw}")
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(), strict=False)
+            except Exception as j:
+                print(f"DEBUG: JSON Parse error: {j}")
+                return None
+        return None
+    except Exception as e:
+        print(f"[LLM] Project generation error: {e}")
+        return None

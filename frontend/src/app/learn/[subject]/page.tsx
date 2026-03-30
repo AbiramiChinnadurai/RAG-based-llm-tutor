@@ -14,7 +14,7 @@ export default function SubjectLearnPage() {
 
     const [topics, setTopics] = useState<string[]>([])
     const [topic, setTopic] = useState('')
-    const [tab, setTab] = useState<'chat' | 'quiz' | 'practice'>('chat')
+    const [tab, setTab] = useState<'chat' | 'quiz' | 'practice' | 'challenge' | 'heatmap'>('chat')
     const [isLoadingTopics, setIsLoadingTopics] = useState(true)
 
     const isCode = /python|java|dsa|data structure|algorithm|programming|code|c\+\+|javascript/i.test(subject)
@@ -110,14 +110,14 @@ export default function SubjectLearnPage() {
 
                 {/* Tabs */}
                 <div style={{ display: 'flex', gap: '4px', padding: '4px', background: 'var(--bg-2)', borderRadius: '10px', marginBottom: '24px', width: 'fit-content' }}>
-                    {(['chat', 'quiz', 'practice'] as const).map(t => (
+                    {(['chat', 'quiz', 'practice', 'challenge', 'heatmap'] as const).map(t => (
                         <button key={t} onClick={() => setTab(t)} style={{
                             padding: '8px 28px', borderRadius: '8px', border: 'none',
                             fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
                             background: tab === t ? 'var(--brand)' : 'transparent',
                             color: tab === t ? '#fff' : 'var(--text-muted)',
                         }}>
-                            {t === 'chat' ? '💬 Chat' : t === 'quiz' ? '🧠 Quiz' : '✍️ Practice'}
+                            {t === 'chat' ? '💬 Chat' : t === 'quiz' ? '🧠 Quiz' : t === 'practice' ? '✍️ Practice' : t === 'challenge' ? '⚔️ Challenge' : '📊 Heatmap'}
                         </button>
                     ))}
                 </div>
@@ -131,6 +131,8 @@ export default function SubjectLearnPage() {
                 {topic && tab === 'chat' && <ChatPanel uid={uid!} subject={subject} topic={topic} />}
                 {topic && tab === 'quiz' && <QuizPanel uid={uid!} subject={subject} topic={topic} />}
                 {topic && tab === 'practice' && <PracticePanel uid={uid!} subject={subject} topic={topic} mode={isCode ? 'code' : 'written'} />}
+                {topic && tab === 'challenge' && <ChallengeCreatePanel uid={uid!} subject={subject} topic={topic} />}
+                {tab === 'heatmap' && <HeatmapPanel uid={uid!} subject={subject} onSelectTopic={(t) => { setTopic(t); setTab('chat'); }} />}
 
                 {/* Floating Roadmap Button */}
                 <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 50 }}>
@@ -297,6 +299,14 @@ function PracticePanel({ uid, subject, topic, mode }: { uid: string; subject: st
     )
 }
 
+const MODALITY_MAP: Record<number, { name: string; description: string }> = {
+    0: { name: "Standard", description: "Clear concise explanation" },
+    1: { name: "Step-by-Step", description: "Broken into numbered steps" },
+    2: { name: "Analogy", description: "Real-world comparison" },
+    3: { name: "Worked Example", description: "Concrete example shown first" },
+    4: { name: "Simplified", description: "Plain language, no jargon" }
+}
+
 // ── Chat Panel ────────────────────────────────────────────────────────────────
 function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topic: string }) {
     const [messages, setMessages] = useState<{ role: 'user' | 'ai'; text: string }[]>([])
@@ -304,6 +314,13 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
     const [loading, setLoading] = useState(false)
     const [isThinking, setIsThinking] = useState(false)
     const [initialized, setInitialized] = useState(false)
+    const [modality, setModality] = useState<number>(0)
+    const [xaiReason, setXaiReason] = useState<string>('')
+    const [showModalityInfo, setShowModalityInfo] = useState(false)
+    const [teachMeBackIndex, setTeachMeBackIndex] = useState<number | null>(null)
+    const [teachMeBackInput, setTeachMeBackInput] = useState('')
+    const [teachMeBackFeedback, setTeachMeBackFeedback] = useState('')
+    const [isEvaluating, setIsEvaluating] = useState(false)
     const bottomRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
@@ -345,7 +362,10 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
                         if (!line.startsWith('data: ')) continue
                         try {
                             const data = JSON.parse(line.slice(6))
-                            if (data.type === 'token') {
+                            if (data.type === 'meta') {
+                                if (data.modality !== undefined) setModality(data.modality)
+                                if (data.emotion?.xai) setXaiReason(data.emotion.xai)
+                            } else if (data.type === 'token') {
                                 setMessages(m => {
                                     const u = [...m]
                                     u[0] = { role: 'ai', text: u[0].text + data.text }
@@ -382,6 +402,57 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
         localStorage.removeItem(storageKey)
         setMessages([])
         setInitialized(false)
+        setXaiReason('')
+    }
+
+    const handleOverride = async (newModality: number) => {
+        setModality(newModality)
+        setShowModalityInfo(false)
+        try {
+            await api.ael.override({ uid, subject, topic, modality: newModality })
+        } catch (e) {}
+    }
+
+    const startTeachMeBack = (index: number) => {
+        setTeachMeBackIndex(index)
+        setTeachMeBackInput('')
+        setTeachMeBackFeedback('')
+    }
+
+    const submitExplanation = async () => {
+        if (!teachMeBackInput.trim() || isEvaluating) return
+        setIsEvaluating(true)
+        setTeachMeBackFeedback('')
+
+        const query = `I'm going to explain "${topic}" back to you. Please evaluate my explanation, give me a score out of 10, and tell me if I missed anything important or got something wrong.\n\nMY EXPLANATION:\n${teachMeBackInput}`
+
+        try {
+            const res = await api.chat.stream({ uid, subject, query, history: [] })
+            const reader = res.body!.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue
+                    try {
+                        const data = JSON.parse(line.slice(6))
+                        if (data.type === 'token') {
+                            setTeachMeBackFeedback(prev => prev + data.text)
+                        }
+                    } catch { }
+                }
+            }
+        } catch (e: any) {
+            setTeachMeBackFeedback('Error: ' + e.message)
+        } finally {
+            setIsEvaluating(false)
+        }
     }
 
     const send = async () => {
@@ -421,11 +492,20 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
                     if (!line.startsWith('data: ')) continue
                     try {
                         const data = JSON.parse(line.slice(6))
-                        if (data.type === 'token') {
+                        if (data.type === 'meta') {
+                            if (data.modality !== undefined) setModality(data.modality)
+                            if (data.emotion?.xai) setXaiReason(data.emotion.xai)
+                        } else if (data.type === 'token') {
                             setIsThinking(false)
                             setMessages(m => {
                                 const u = [...m]
                                 u[u.length - 1] = { role: 'ai', text: u[u.length - 1].text + data.text }
+                                return u
+                            })
+                        } else if (data.type === 'error') {
+                            setMessages(m => {
+                                const u = [...m]
+                                u[u.length - 1] = { role: 'ai', text: '⚠️ AI Error: ' + data.message }
                                 return u
                             })
                         }
@@ -484,33 +564,87 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
                             </div>
                         )}
 
-                        {/* Message Bubble */}
-                        <div className="markdown-prose" style={{
-                            maxWidth: '75%', padding: '14px 20px', borderRadius: '16px', fontSize: '14px', lineHeight: 1.6,
-                            background: m.role === 'user' ? 'linear-gradient(135deg, var(--brand-dim), var(--brand))' : 'var(--bg-glass)',
-                            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-                            color: m.role === 'user' ? '#000' : 'var(--text-primary)',
-                            border: m.role === 'user' ? 'none' : '1px solid var(--border)',
-                            borderTopRightRadius: m.role === 'user' ? '4px' : '16px',
-                            borderTopLeftRadius: m.role === 'ai' ? '4px' : '16px',
-                            boxShadow: m.role === 'user' ? '0 8px 24px rgba(0, 220, 130, 0.2)' : '0 4px 16px rgba(0,0,0,0.2)',
-                            overflowX: 'auto', fontWeight: m.role === 'user' ? 500 : 400
-                        }}>
-                            {m.text ? (
-                                <ReactMarkdown components={mdComponents}>{m.text}</ReactMarkdown>
-                            ) : null}
-                            {isThinking && i === messages.length - 1 && !m.text && (
-                                <div style={{ display: 'flex', gap: '4px', padding: '4px 0' }}>
-                                    {[0, 1, 2].map(dot => (
-                                        <div key={dot} style={{
-                                            width: '6px', height: '6px', borderRadius: '50%', background: 'var(--brand-light)',
-                                            animation: 'pulseGlow 1.2s infinite', animationDelay: `${dot * 0.2}s`
-                                        }} />
-                                    ))}
-                                </div>
+                        {/* Message Bubble + Teach Me Back */}
+                        <div style={{ maxWidth: '75%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div className="markdown-prose" style={{
+                                padding: '14px 20px', borderRadius: '16px', fontSize: '14px', lineHeight: 1.6,
+                                background: m.role === 'user' ? 'linear-gradient(135deg, var(--brand-dim), var(--brand))' : 'var(--bg-glass)',
+                                backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+                                color: m.role === 'user' ? '#000' : 'var(--text-primary)',
+                                border: m.role === 'user' ? 'none' : '1px solid var(--border)',
+                                borderTopRightRadius: m.role === 'user' ? '4px' : '16px',
+                                borderTopLeftRadius: m.role === 'ai' ? '4px' : '16px',
+                                boxShadow: m.role === 'user' ? '0 8px 24px rgba(0, 220, 130, 0.2)' : '0 4px 16px rgba(0,0,0,0.2)',
+                                overflowX: 'auto', fontWeight: m.role === 'user' ? 500 : 400
+                            }}>
+                                {m.text ? (
+                                    <ReactMarkdown components={mdComponents}>{m.text}</ReactMarkdown>
+                                ) : null}
+                                {isThinking && i === messages.length - 1 && !m.text && (
+                                    <div style={{ display: 'flex', gap: '4px', padding: '4px 0' }}>
+                                        {[0, 1, 2].map(dot => (
+                                            <div key={dot} style={{
+                                                width: '6px', height: '6px', borderRadius: '50%', background: 'var(--brand-light)',
+                                                animation: 'pulseGlow 1.2s infinite', animationDelay: `${dot * 0.2}s`
+                                            }} />
+                                        ))}
+                                    </div>
+                                )}
+                                {loading && !isThinking && i === messages.length - 1 && !m.text && (
+                                    <span style={{ display: 'inline-block', width: '8px', height: '16px', background: 'var(--brand-light)', animation: 'pulseGlow 1s infinite alternate', verticalAlign: 'middle', borderRadius: '2px' }} />
+                                )}
+                            </div>
+
+                            {/* Teach Me Back Trigger */}
+                            {m.role === 'ai' && m.text && !loading && teachMeBackIndex !== i && (
+                                <button 
+                                    onClick={() => startTeachMeBack(i)}
+                                    style={{ 
+                                        alignSelf: 'flex-start', background: 'transparent', border: '1px solid var(--border)', 
+                                        color: 'var(--text-muted)', fontSize: '11px', padding: '4px 10px', borderRadius: '12px',
+                                        cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '4px'
+                                    }}
+                                    onMouseOver={e => { e.currentTarget.style.background = 'var(--bg-3)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                                    onMouseOut={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                                >
+                                    🧠 Test your understanding
+                                </button>
                             )}
-                            {loading && !isThinking && i === messages.length - 1 && !m.text && (
-                                <span style={{ display: 'inline-block', width: '8px', height: '16px', background: 'var(--brand-light)', animation: 'pulseGlow 1s infinite alternate', verticalAlign: 'middle', borderRadius: '2px' }} />
+
+                            {/* Teach Me Back Interface */}
+                            {teachMeBackIndex === i && (
+                                <div className="card animate-slide-up" style={{ padding: '16px', marginTop: '4px', background: 'var(--bg-2)', border: '1px solid var(--brand)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                        <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--brand)' }}>Explain "{topic}" in your own words:</div>
+                                        <button onClick={() => setTeachMeBackIndex(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
+                                    </div>
+                                    <textarea 
+                                        value={teachMeBackInput}
+                                        onChange={e => setTeachMeBackInput(e.target.value)}
+                                        placeholder="Type your explanation here..."
+                                        style={{ width: '100%', background: 'var(--bg-1)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: '8px', padding: '10px', fontSize: '13px', minHeight: '80px', outline: 'none', resize: 'vertical' }}
+                                        disabled={isEvaluating}
+                                    />
+                                    <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'flex-end' }}>
+                                        <button 
+                                            className="btn-primary" 
+                                            style={{ width: 'auto', padding: '6px 20px', fontSize: '12px' }}
+                                            onClick={submitExplanation}
+                                            disabled={!teachMeBackInput.trim() || isEvaluating}
+                                        >
+                                            {isEvaluating ? 'Evaluating...' : 'Evaluate Self-Reflection'}
+                                        </button>
+                                    </div>
+
+                                    {teachMeBackFeedback && (
+                                        <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(0, 220, 130, 0.05)', borderRadius: '8px', borderLeft: '3px solid var(--brand)' }}>
+                                            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--brand)', fontWeight: 700, marginBottom: '6px' }}>Feedback & Score</div>
+                                            <div className="markdown-prose" style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                                                <ReactMarkdown components={mdComponents}>{teachMeBackFeedback}</ReactMarkdown>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             )}
                         </div>
 
@@ -523,6 +657,62 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
                     </div>
                 ))}
                 <div ref={bottomRef} />
+            </div>
+
+            {/* AEL Modality Pill */}
+            <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', marginBottom: '-10px', zIndex: 10 }}>
+                <button
+                    onClick={() => setShowModalityInfo(!showModalityInfo)}
+                    style={{
+                        padding: '6px 14px', borderRadius: '20px', background: 'var(--bg-3)', border: '1px solid var(--border)',
+                        color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                        transition: 'all 0.2s'
+                    }}
+                    onMouseOver={e => e.currentTarget.style.borderColor = 'var(--brand)'}
+                    onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}
+                >
+                    🧠 Mode: {MODALITY_MAP[modality]?.name || 'Standard'}
+                    <span style={{ opacity: 0.6 }}>ⓘ</span>
+                </button>
+
+                {showModalityInfo && (
+                    <div className="card animate-slide-up" style={{
+                        position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+                        width: '300px', padding: '20px', marginBottom: '12px', zIndex: 20, textAlign: 'left'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--brand)' }}>{MODALITY_MAP[modality]?.name}</h4>
+                            <button onClick={() => setShowModalityInfo(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>×</button>
+                        </div>
+                        <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '8px' }}>{MODALITY_MAP[modality]?.description}</p>
+                        
+                        {xaiReason && (
+                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '8px', marginBottom: '16px', borderLeft: '3px solid var(--brand)' }}>
+                                <div style={{ fontSize: '10px', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '4px', letterSpacing: '0.05em' }}>AI Reasoning</div>
+                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontStyle: 'italic' }}>"{xaiReason}"</div>
+                            </div>
+                        )}
+
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase' }}>Override Mode</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {[0,1,2,3,4].map(m => (
+                                <button
+                                    key={m}
+                                    onClick={() => handleOverride(m)}
+                                    style={{
+                                        padding: '4px 10px', borderRadius: '6px', border: '1px solid var(--border)',
+                                        background: modality === m ? 'var(--brand)' : 'var(--bg-2)',
+                                        color: modality === m ? '#000' : 'var(--text-secondary)',
+                                        fontSize: '11px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s'
+                                    }}
+                                >
+                                    {MODALITY_MAP[m].name}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Input Area */}
@@ -558,6 +748,55 @@ function ChatPanel({ uid, subject, topic }: { uid: string; subject: string; topi
         </div>
     )
 }
+
+function ChallengeCreatePanel({ uid, subject, topic }: { uid: string; subject: string; topic: string }) {
+    const [loading, setLoading] = useState(false)
+    const [roomCode, setRoomCode] = useState('')
+
+    const createChallenge = async () => {
+        setLoading(true)
+        try {
+            const res = await api.challenge.create({ uid, subject, topic })
+            setRoomCode(res.room_code)
+        } catch (e: any) {
+            alert(e.message)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <div className="card animate-slide-up" style={{ padding: '32px', textAlign: 'center' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚔️</div>
+            <h2 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Peer Challenge Room</h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '32px', maxWidth: '400px', margin: '0 auto 32px auto' }}>
+                Generate a 5-question competitive quiz on <b>{topic}</b> and share the room code with your peers.
+            </p>
+            
+            {!roomCode ? (
+                <button
+                    onClick={createChallenge}
+                    disabled={loading}
+                    className="btn btn-primary"
+                    style={{ padding: '12px 32px', fontSize: '15px' }}
+                >
+                    {loading ? 'Generating Challenge...' : 'Create Challenge Room'}
+                </button>
+            ) : (
+                <div style={{ background: 'var(--bg-2)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>Room Code</div>
+                    <div style={{ fontSize: '36px', fontWeight: 900, color: 'var(--brand)', letterSpacing: '0.1em', marginBottom: '16px' }}>{roomCode}</div>
+                    <Link href={`/challenge/${roomCode}`} target="_blank">
+                        <button className="btn btn-primary" style={{ padding: '8px 24px', fontSize: '14px' }}>
+                            Join Room
+                        </button>
+                    </Link>
+                </div>
+            )}
+        </div>
+    )
+}
+
 
 // ── Quiz Panel ────────────────────────────────────────────────────────────────
 function QuizPanel({ uid, subject, topic }: { uid: string; subject: string; topic: string }) {
@@ -676,12 +915,7 @@ function RoadmapSlidePanel({ uid, open, onClose, onUpdatePct }: { uid: string, o
 
     const markComplete = async (dayNum: number) => {
         try {
-            // Using BASE from api.ts
-            const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000'
-            await fetch(`${BASE}/api/plan/${uid}/day/${dayNum}/status`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'completed' })
-            })
+            await api.plan.updateStatus(uid!, dayNum, 'completed')
             setDays(prev => {
                 const updated = prev.map(d => d.day_number === dayNum ? { ...d, status: 'completed' } : d)
                 const completed = updated.filter(d => d.status === 'completed').length
@@ -826,3 +1060,78 @@ function RoadmapSlidePanel({ uid, open, onClose, onUpdatePct }: { uid: string, o
         </>
     )
 }
+
+// ── Heatmap Panel ─────────────────────────────────────────────────────────────
+function HeatmapPanel({ uid, subject, onSelectTopic }: { uid: string; subject: string; onSelectTopic: (topic: string) => void }) {
+    const [data, setData] = useState<any[]>([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        setLoading(true)
+        api.heatmap.get(uid, subject)
+            .then(setData)
+            .catch(console.error)
+            .finally(() => setLoading(false))
+    }, [uid, subject])
+
+    if (loading) return (
+        <div className="card" style={{ padding: '28px' }}>
+            <div className="shimmer" style={{ height: '200px', width: '100%', borderRadius: '12px' }} />
+        </div>
+    )
+
+    return (
+        <div className="card" style={{ padding: '28px' }}>
+            <div style={{ marginBottom: '24px' }}>
+                <h3 style={{ margin: '0 0 4px 0', color: 'var(--text-primary)', fontSize: '20px' }}>Topic Mastery Heatmap</h3>
+                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '14px' }}>Visualizing your progress across the curriculum</p>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '12px' }}>
+                {data.map((item, i) => (
+                    <div 
+                        key={i} 
+                        onClick={() => onSelectTopic(item.topic)}
+                        style={{ 
+                            padding: '16px', borderRadius: '12px', border: '1px solid var(--border)', cursor: 'pointer', transition: 'all 0.2s',
+                            background: item.strength_label === 'Strong' ? 'rgba(34, 197, 94, 0.1)' : 
+                                        item.strength_label === 'Moderate' ? 'rgba(234, 179, 8, 0.1)' : 
+                                        item.strength_label === 'Weak' ? 'rgba(239, 68, 68, 0.1)' : 'var(--bg-1)',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-2px)')}
+                        onMouseLeave={e => (e.currentTarget.style.transform = 'translateY(0)')}
+                    >
+                        <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px', wordBreak: 'break-word' }}>{item.topic}</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ 
+                                fontSize: '10px', padding: '2px 8px', borderRadius: '12px', fontWeight: 700, textTransform: 'uppercase',
+                                background: item.strength_label === 'Strong' ? '#22c55e' : 
+                                            item.strength_label === 'Moderate' ? '#eab308' : 
+                                            item.strength_label === 'Weak' ? '#ef4444' : 'var(--text-muted)',
+                                color: '#fff'
+                            }}>
+                                {item.strength_label}
+                            </span>
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{item.avg_accuracy}%</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            <div style={{ marginTop: '32px', display: 'flex', gap: '24px', justifyContent: 'center', borderTop: '1px solid var(--border)', paddingTop: '20px' }}>
+                {[
+                    { label: 'Strong (70%+)', color: '#22c55e' },
+                    { label: 'Moderate (40-69%)', color: '#eab308' },
+                    { label: 'Weak (<40%)', color: '#ef4444' },
+                    { label: 'Unattempted', color: 'var(--text-muted)' }
+                ].map(l => (
+                    <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <div style={{ width: '12px', height: '12px', background: l.color, borderRadius: '2px' }} />
+                        {l.label}
+                    </div>
+                ))}
+            </div>
+        </div>
+    )
+}
+

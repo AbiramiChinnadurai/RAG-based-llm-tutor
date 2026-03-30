@@ -157,29 +157,40 @@ def get_profile_ep(uid: str):
 @app.get("/api/profile/{uid}/subjects")
 def get_subjects(uid: str):
     try:
+        # 1. Fetch metadata subjects
         raw_subjects = get_subjects_with_metadata(uid)
+        subjects_from_meta = {s["subject"]: s for s in raw_subjects}
 
-        # --- FALLBACK: Sync if learner_subjects is empty but profile has subjects ---
-        if not raw_subjects:
-            profile = get_profile(uid)
-            if profile and profile.get("subject_list"):
-                print(f"[Subjects Sync] Migrating legacy subjects for UID {uid}")
-                subjects = [s.strip() for s in profile["subject_list"].split(",") if s.strip()]
-                if subjects:
-                    update_subject_list(uid, subjects)
-                    raw_subjects = get_subjects_with_metadata(uid)
-        # -------------------------------------------------------------------------
+        # 2. Fetch profile subjects (legacy/backup)
+        profile = get_profile(uid)
+        subjects_from_profile = []
+        if profile and profile.get("subject_list"):
+            subjects_from_profile = [s.strip() for s in profile["subject_list"].split(",") if s.strip()]
 
-        # Ensure indexing status is merged in
-        res = []
-        for s in raw_subjects:
+        # 3. Merge: Ensure all profile subjects have an entry in the response
+        res_map = subjects_from_meta.copy()
+        for s_name in subjects_from_profile:
+            if s_name not in res_map:
+                print(f"[Subjects Sync] Merging missing subject: {s_name}")
+                res_map[s_name] = {
+                    "uid": int(uid),
+                    "subject": s_name,
+                    "deadline": "",
+                    "purpose": ""
+                }
+
+        # 4. Refine final list (add indexing status, etc.)
+        final_res = []
+        for s in res_map.values():
             s["index_ready"] = index_exists(s["subject"])
             s["indexing"] = s["subject"] in INDEXING_IN_PROGRESS
-            s["name"] = s["subject"] # For frontend compatibility
-            s["topics"] = get_topics(s["subject"]) # Add topics
-            res.append(s)
-        return res
+            s["name"] = s["subject"]
+            s["topics"] = get_topics(s["subject"])
+            final_res.append(s)
+
+        return final_res
     except Exception as e:
+        print(f"[Subjects/get] Error: {e}")
         raise HTTPException(500, str(e))
 
 @app.get("/api/profile/{uid}/stats")

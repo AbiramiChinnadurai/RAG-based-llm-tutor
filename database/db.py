@@ -1006,28 +1006,38 @@ def get_subject_content(subject):
     return row["full_text"] if row else None
 
 def update_subject_list(uid, subjects):
-    """Update the learner's subject list in learner_profile and ensure learner_subjects entries exist."""
+    """
+    Update the learner's subject list in learner_profile and ensure learner_subjects entries exist.
+    This version is ADDITIVE and doesn't delete existing subjects unless explicitly requested.
+    """
     conn = get_connection()
     c = conn.cursor()
-    # 1. Update the comma-separated list for legacy compatibility
+    
+    # 1. Fetch current subjects to merge
+    c.execute("SELECT subject_list FROM learner_profile WHERE uid = %s", (uid,))
+    row = c.fetchone()
+    current_str = row["subject_list"] if row and row["subject_list"] else ""
+    current_set = {s.strip() for s in current_str.split(",") if s.strip()}
+    
+    # 2. Merge with new subjects
+    new_set = {s.strip() for s in subjects if s.strip()}
+    merged_set = current_set.union(new_set)
+    merged_list = sorted(list(merged_set))
+    
+    # 3. Update the comma-separated list
     c.execute(
         "UPDATE learner_profile SET subject_list = %s WHERE uid = %s",
-        (", ".join(subjects), uid)
+        (", ".join(merged_list), uid)
     )
-    # 2. Ensure entries exist in learner_subjects
-    for s in subjects:
+    
+    # 4. Ensure entries exist in learner_subjects
+    for s in merged_list:
         c.execute("""
             INSERT INTO learner_subjects (uid, subject)
             VALUES (%s, %s)
             ON CONFLICT (uid, subject) DO NOTHING
         """, (uid, s))
-    # 3. Cleanup removed subjects from metadata table
-    if subjects:
-        placeholders = ", ".join(["%s"] * len(subjects))
-        c.execute(f"DELETE FROM learner_subjects WHERE uid = %s AND subject NOT IN ({placeholders})", (uid, *subjects))
-    else:
-        c.execute("DELETE FROM learner_subjects WHERE uid = %s", (uid,))
-        
+    
     conn.commit()
     conn.close()
 

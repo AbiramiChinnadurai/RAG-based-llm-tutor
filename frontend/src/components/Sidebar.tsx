@@ -74,7 +74,7 @@ export default function Sidebar() {
     const timeKey = `llmits_subjects_time_${uid}`
     const now = Date.now()
     const cachedTime = localStorage.getItem(timeKey)
-    const isFresh = cachedTime && (now - parseInt(cachedTime)) < 300000 // 5 mins
+    const isFresh = cachedTime && (now - parseInt(cachedTime)) < 30000 // 30 seconds cache for better sync
     
     if (isFresh && !force) {
       const cached = localStorage.getItem(cacheKey)

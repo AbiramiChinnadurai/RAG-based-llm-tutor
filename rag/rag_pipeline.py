@@ -230,15 +230,15 @@ def extract_topics_from_pdf(pdf_path):
                     if not text or len(text) < 3 or len(text) > 120:
                         continue
 
-                    # Detect headings: large font OR bold OR numbered patterns
+                    # Detect headings: slightly lower size threshold OR bold OR numbered patterns
                     is_numbered = bool(
                         re.match(
-                            r'^(\d+[\.\)]\s|Chapter\s|Unit\s|Section\s|Topic\s|Module\s)',
+                            r'^(\d+[\.\)](\s|$)|Chapter\s|Unit\s|Section\s|Topic\s|Module\s)',
                             text, re.IGNORECASE
                         )
                     )
 
-                    if (size >= 13 or is_bold or is_numbered):
+                    if (size >= 11.5 or is_bold or is_numbered):
                         # Clean up common artifacts
                         clean = text.strip("•·-–—:").strip()
                         if clean and clean.lower() not in seen:
@@ -262,27 +262,21 @@ def extract_topics_from_pdf(pdf_path):
         words = t.split()
         lower_t = t.lower()
 
-        # Relaxed filters for Technical Terms (Arrays, Queues, etc)
-        # Minimum 5 characters
-        if len(t) < 5:
+        # Relaxed minimum length to 3 for technical terms
+        if len(t) < 3:
             continue
             
         # Skip if it matches: numbers only, roman numerals
-        if t.isdigit():
-            continue
-        if lower_t in roman_numerals:
+        if t.isdigit() or lower_t in roman_numerals:
             continue
             
         # Skip if it contains: "@", "http", ".com", "©", "®", "ISBN"
         if any(bad in lower_t for bad in bad_strings):
             continue
             
-        # Skip if it looks like a name (contains " and " or matches "FirstName LastName" pattern with capital letters only)
-        if " and " in lower_t:
+        # Skip if it looks like a name
+        if " and " in lower_t or re.match(r"^[A-Z]+\s[A-Z]+$", t):
             continue
-        if re.match(r"^[A-Z]+\s[A-Z]+$", t):
-            continue
-        # Hardcoded check for "Andreas C. Müller" to ensure it is caught (bad topic example)
         if "Andreas" in t or "Müller" in t or "Editor" in t:
             continue
             
@@ -290,18 +284,18 @@ def extract_topics_from_pdf(pdf_path):
         if any(c in t for c in code_chars):
             continue
             
-        # Skip chapter/page labels that are just "Chapter X" or "Page X" with no description
+        # Skip chapter/page labels that are just "Chapter X" or "Page X"
         if re.match(r"^(Chapter|Page)\s+\d+$", t, re.IGNORECASE):
             continue
             
-        # Filter "Introduction to"
+        # Filter "Introduction to" standalone
         if lower_t == "introduction to":
             continue
 
         filtered_topics.append(t)
 
     # 2. Deduplicate by similarity
-    # If two topics share more than 60% of their words, keep only the longer one
+    # Increase threshold from 0.6 to 0.85 for accuracy
     final_topics = []
 
     def get_word_set(s):
@@ -322,7 +316,8 @@ def extract_topics_from_pdf(pdf_path):
             sim1 = intersection / len(t_words)
             sim2 = intersection / len(ext_words)
             
-            if sim1 > 0.6 or sim2 > 0.6:
+            # 85% overlap threshold (much more conservative)
+            if sim1 > 0.85 or sim2 > 0.85:
                 is_dup = True
                 if len(t) > len(existing):
                     final_topics[i] = t
